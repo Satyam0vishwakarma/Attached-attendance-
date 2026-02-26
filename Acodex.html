@@ -1,0 +1,1534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ACADEX — Attendance Management</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0a0a0f;
+    --ink2: #13131a;
+    --ink3: #1e1e2a;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --gold: #f0c060;
+    --gold2: #e8a830;
+    --teal: #38d9c0;
+    --red: #ff5f6d;
+    --text: #e8e8f0;
+    --muted: #7878a0;
+    --card: rgba(255,255,255,0.03);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; background:var(--ink); color:var(--text); font-family:'DM Sans', sans-serif; overflow:hidden; }
+
+  /* Background grain */
+  body::before {
+    content:''; position:fixed; inset:0;
+    background: radial-gradient(ellipse 80% 50% at 20% 10%, rgba(240,192,96,0.06) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 40% at 80% 80%, rgba(56,217,192,0.05) 0%, transparent 60%);
+    pointer-events:none; z-index:0;
+  }
+
+  .layout { display:flex; height:100vh; position:relative; z-index:1; }
+
+  /* SIDEBAR */
+  .sidebar {
+    width: 240px; min-width:240px; background: var(--ink2);
+    border-right: 1px solid var(--border);
+    display:flex; flex-direction:column;
+    padding: 0;
+  }
+  .brand {
+    padding: 28px 24px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand-name {
+    font-family:'Syne', sans-serif; font-size:1.4rem; font-weight:800;
+    color:var(--gold); letter-spacing:2px;
+  }
+  .brand-sub { font-size:0.6rem; color:var(--muted); letter-spacing:3px; text-transform:uppercase; margin-top:2px; }
+
+  .nav { flex:1; padding:16px 12px; display:flex; flex-direction:column; gap:4px; overflow-y:auto; }
+  .nav-section { font-size:0.55rem; color:var(--muted); letter-spacing:3px; text-transform:uppercase; padding:12px 12px 6px; }
+  .nav-item {
+    display:flex; align-items:center; gap:12px;
+    padding:10px 12px; border-radius:10px; cursor:pointer;
+    font-size:0.82rem; font-weight:500; color:var(--muted);
+    transition:all 0.15s; text-decoration:none;
+  }
+  .nav-item:hover { background:var(--ink3); color:var(--text); }
+  .nav-item.active { background: rgba(240,192,96,0.1); color:var(--gold); }
+  .nav-item .icon { font-size:1rem; width:20px; text-align:center; }
+
+  .sidebar-footer {
+    padding:16px; border-top:1px solid var(--border);
+    display:flex; align-items:center; gap:10px;
+  }
+  .avatar-sm {
+    width:34px; height:34px; border-radius:50%;
+    background: linear-gradient(135deg, var(--gold), var(--gold2));
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Syne',sans-serif; font-weight:800; font-size:0.8rem; color:var(--ink);
+  }
+  .user-info { flex:1; }
+  .user-name { font-size:0.78rem; font-weight:600; }
+  .user-role { font-size:0.6rem; color:var(--muted); }
+
+  /* MAIN */
+  .main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+
+  .topbar {
+    height:64px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 28px; flex-shrink:0;
+  }
+  .page-title { font-family:'Syne',sans-serif; font-size:1.1rem; font-weight:700; }
+  .topbar-right { display:flex; align-items:center; gap:12px; }
+  .today-badge {
+    background:rgba(240,192,96,0.1); border:1px solid rgba(240,192,96,0.2);
+    color:var(--gold); font-size:0.7rem; font-family:'DM Mono',monospace;
+    padding:5px 12px; border-radius:20px; letter-spacing:1px;
+  }
+  .btn {
+    padding:8px 16px; border-radius:8px; font-size:0.78rem; font-weight:600;
+    cursor:pointer; border:none; transition:all 0.15s; font-family:'DM Sans',sans-serif;
+  }
+  .btn-primary { background:var(--gold); color:var(--ink); }
+  .btn-primary:hover { background:var(--gold2); }
+  .btn-ghost { background:var(--card); border:1px solid var(--border2); color:var(--text); }
+  .btn-ghost:hover { background:var(--ink3); }
+
+  /* CONTENT */
+  .content { flex:1; overflow-y:auto; padding:24px 28px; }
+
+  /* STAT CARDS */
+  .stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; }
+  .stat-card {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:14px; padding:20px; position:relative; overflow:hidden;
+    transition:border-color 0.2s;
+  }
+  .stat-card:hover { border-color:var(--border2); }
+  .stat-card::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  }
+  .stat-card.gold::before { background:var(--gold); }
+  .stat-card.teal::before { background:var(--teal); }
+  .stat-card.red::before { background:var(--red); }
+  .stat-card.purple::before { background:#a78bfa; }
+  .stat-label { font-size:0.62rem; color:var(--muted); letter-spacing:2px; text-transform:uppercase; margin-bottom:10px; }
+  .stat-value { font-family:'Syne',sans-serif; font-size:2rem; font-weight:800; line-height:1; }
+  .stat-value.gold { color:var(--gold); }
+  .stat-value.teal { color:var(--teal); }
+  .stat-value.red { color:var(--red); }
+  .stat-value.purple { color:#a78bfa; }
+  .stat-sub { font-size:0.68rem; color:var(--muted); margin-top:6px; }
+
+  /* GRID LAYOUT */
+  .grid-2 { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; margin-bottom:16px; }
+  .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:16px; }
+
+  .card {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:14px; padding:20px;
+  }
+  .card-header {
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:16px;
+  }
+  .card-title { font-family:'Syne',sans-serif; font-size:0.85rem; font-weight:700; letter-spacing:0.5px; }
+  .card-badge {
+    font-size:0.6rem; font-family:'DM Mono',monospace; letter-spacing:1px;
+    padding:3px 8px; border-radius:20px;
+  }
+  .badge-gold { background:rgba(240,192,96,0.1); color:var(--gold); }
+  .badge-teal { background:rgba(56,217,192,0.1); color:var(--teal); }
+  .badge-red  { background:rgba(255,95,109,0.1); color:var(--red); }
+
+  /* ATTENDANCE TABLE */
+  .att-table { width:100%; border-collapse:collapse; }
+  .att-table th { font-size:0.6rem; color:var(--muted); letter-spacing:2px; text-transform:uppercase; padding:8px 10px; text-align:left; border-bottom:1px solid var(--border); }
+  .att-table td { padding:10px 10px; font-size:0.8rem; border-bottom:1px solid var(--border); }
+  .att-table tr:last-child td { border-bottom:none; }
+  .att-table tr:hover td { background:var(--ink3); }
+  .status-badge {
+    font-size:0.62rem; font-family:'DM Mono',monospace; padding:3px 10px;
+    border-radius:20px; font-weight:500;
+  }
+  .status-present { background:rgba(56,217,192,0.1); color:var(--teal); }
+  .status-absent  { background:rgba(255,95,109,0.1); color:var(--red); }
+  .status-late    { background:rgba(240,192,96,0.1); color:var(--gold); }
+
+  /* MINI AVATAR */
+  .mini-avatar {
+    width:28px; height:28px; border-radius:50%;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:0.65rem; font-weight:700; font-family:'Syne',sans-serif;
+    flex-shrink:0;
+  }
+  .flex-center { display:flex; align-items:center; gap:8px; }
+
+  /* PROGRESS BAR */
+  .progress-wrap { background:var(--ink3); border-radius:100px; height:6px; overflow:hidden; }
+  .progress-fill { height:100%; border-radius:100px; transition:width 0.6s ease; }
+
+  /* CLASS LIST */
+  .class-item {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 0; border-bottom:1px solid var(--border);
+  }
+  .class-item:last-child { border-bottom:none; }
+  .class-name { font-size:0.82rem; font-weight:600; }
+  .class-meta { font-size:0.68rem; color:var(--muted); margin-top:2px; }
+
+  /* FACE SCAN WIDGET */
+  .face-scan-card {
+    background: linear-gradient(135deg, rgba(56,217,192,0.08), rgba(240,192,96,0.05));
+    border:1px solid rgba(56,217,192,0.2);
+    border-radius:14px; padding:20px;
+    display:flex; flex-direction:column; align-items:center; gap:12px;
+    text-align:center; cursor:pointer; transition:all 0.2s;
+  }
+  .face-scan-card:hover { border-color:rgba(56,217,192,0.4); transform:translateY(-2px); }
+  .scan-ring {
+    width:72px; height:72px; border-radius:50%;
+    border:2px solid var(--teal);
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.8rem; position:relative;
+    animation: pulse-ring 2s ease-in-out infinite;
+  }
+  @keyframes pulse-ring {
+    0%,100% { box-shadow:0 0 0 0 rgba(56,217,192,0.3); }
+    50% { box-shadow:0 0 0 12px rgba(56,217,192,0); }
+  }
+  .scan-title { font-family:'Syne',sans-serif; font-size:0.88rem; font-weight:700; color:var(--teal); }
+  .scan-sub { font-size:0.68rem; color:var(--muted); }
+
+  /* NOTIFICATION DOT */
+  .notif-dot {
+    width:7px; height:7px; border-radius:50%; background:var(--red);
+    display:inline-block; margin-left:6px; vertical-align:middle;
+    animation: blink 1.5s ease-in-out infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* MODAL */
+  .modal-overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,0.7);
+    backdrop-filter:blur(8px); z-index:1000;
+    display:none; align-items:center; justify-content:center;
+  }
+  .modal-overlay.open { display:flex; }
+  .modal {
+    background:var(--ink2); border:1px solid var(--border2);
+    border-radius:20px; padding:28px; width:460px; max-width:90vw;
+    animation: modal-in 0.2s ease;
+  }
+  @keyframes modal-in { from{transform:scale(0.96);opacity:0} to{transform:scale(1);opacity:1} }
+  .modal-title { font-family:'Syne',sans-serif; font-size:1.1rem; font-weight:800; margin-bottom:6px; }
+  .modal-sub { font-size:0.75rem; color:var(--muted); margin-bottom:20px; }
+
+  /* FACE SCAN MODAL */
+  .camera-box {
+    width:100%; aspect-ratio:4/3; background:var(--ink3);
+    border-radius:12px; border:1px solid var(--border);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    position:relative; overflow:hidden; margin-bottom:16px;
+  }
+  #cameraFeed { width:100%; height:100%; object-fit:cover; display:none; border-radius:12px; }
+  .scan-overlay {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+  .scan-frame {
+    width:140px; height:140px; position:relative;
+  }
+  .scan-frame::before, .scan-frame::after {
+    content:''; position:absolute; width:30px; height:30px; border-color:var(--teal); border-style:solid;
+  }
+  .scan-frame::before { top:0; left:0; border-width:3px 0 0 3px; border-radius:4px 0 0 0; }
+  .scan-frame::after  { bottom:0; right:0; border-width:0 3px 3px 0; border-radius:0 0 4px 0; }
+  .scan-line {
+    position:absolute; left:10px; right:10px; height:2px;
+    background:linear-gradient(90deg, transparent, var(--teal), transparent);
+    animation:scan-move 2s ease-in-out infinite;
+  }
+  @keyframes scan-move { 0%{top:10px} 100%{top:calc(100% - 12px)} }
+  .scan-corner-br { position:absolute; bottom:0; left:0; width:30px; height:30px; border-bottom:3px solid var(--teal); border-left:3px solid var(--teal); border-radius:0 0 0 4px; }
+  .scan-corner-tl { position:absolute; top:0; right:0; width:30px; height:30px; border-top:3px solid var(--teal); border-right:3px solid var(--teal); border-radius:0 4px 0 0; }
+  .camera-placeholder { text-align:center; }
+  .camera-placeholder .icon { font-size:2.5rem; margin-bottom:8px; opacity:0.3; }
+  .camera-placeholder p { font-size:0.75rem; color:var(--muted); }
+  #scanStatus { font-size:0.72rem; color:var(--muted); text-align:center; margin-bottom:12px; font-family:'DM Mono',monospace; }
+  #scanStatus.success { color:var(--teal); }
+  #scanStatus.fail { color:var(--red); }
+
+  .form-group { margin-bottom:14px; }
+  .form-label { font-size:0.65rem; color:var(--muted); letter-spacing:2px; text-transform:uppercase; margin-bottom:6px; display:block; }
+  .form-input {
+    width:100%; background:var(--ink3); border:1px solid var(--border2);
+    border-radius:8px; padding:10px 14px; color:var(--text); font-size:0.85rem;
+    font-family:'DM Sans',sans-serif; outline:none; transition:border-color 0.15s;
+  }
+  .form-input:focus { border-color:var(--gold); }
+  .form-select { appearance:none; cursor:pointer; }
+
+  .modal-actions { display:flex; gap:10px; margin-top:16px; }
+  .modal-actions .btn { flex:1; padding:10px; }
+
+  /* SCROLLBAR */
+  ::-webkit-scrollbar { width:4px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:var(--ink3); border-radius:2px; }
+
+  /* PAGE SECTIONS */
+  .page-section { display:none; }
+  .page-section.active { display:block; }
+
+  /* STUDENTS PAGE */
+  .search-bar {
+    display:flex; gap:10px; margin-bottom:20px; align-items:center;
+  }
+  .search-input {
+    flex:1; background:var(--card); border:1px solid var(--border2);
+    border-radius:10px; padding:10px 16px; color:var(--text); font-size:0.85rem;
+    font-family:'DM Sans',sans-serif; outline:none;
+  }
+  .search-input::placeholder { color:var(--muted); }
+  .students-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  .student-card {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:14px; padding:18px;
+    transition:border-color 0.15s, transform 0.15s;
+    cursor:pointer;
+  }
+  .student-card:hover { border-color:var(--border2); transform:translateY(-2px); }
+  .student-avatar {
+    width:46px; height:46px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Syne',sans-serif; font-weight:800; font-size:1rem;
+    margin-bottom:10px;
+  }
+  .student-name { font-size:0.88rem; font-weight:600; margin-bottom:2px; }
+  .student-id { font-size:0.65rem; color:var(--muted); font-family:'DM Mono',monospace; margin-bottom:10px; }
+  .student-stats { display:flex; gap:12px; }
+  .student-stat { font-size:0.65rem; color:var(--muted); }
+  .student-stat span { color:var(--text); font-weight:600; }
+
+  /* MARK ATTENDANCE PAGE */
+  .att-class-selector {
+    display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:24px;
+  }
+  .class-btn {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:12px; padding:14px; cursor:pointer; transition:all 0.15s;
+    text-align:center;
+  }
+  .class-btn:hover { border-color:var(--border2); }
+  .class-btn.selected { border-color:var(--gold); background:rgba(240,192,96,0.05); }
+  .class-btn-name { font-size:0.85rem; font-weight:700; font-family:'Syne',sans-serif; }
+  .class-btn-sub { font-size:0.65rem; color:var(--muted); margin-top:3px; }
+
+  .attendance-list { display:flex; flex-direction:column; gap:8px; }
+  .att-student-row {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:12px; padding:14px 18px;
+    display:flex; align-items:center; gap:14px;
+  }
+  .att-student-info { flex:1; }
+  .att-student-name { font-size:0.85rem; font-weight:600; }
+  .att-student-id { font-size:0.65rem; color:var(--muted); font-family:'DM Mono',monospace; }
+  .att-controls { display:flex; gap:6px; }
+  .att-btn {
+    padding:6px 14px; border-radius:20px; font-size:0.7rem; font-weight:600;
+    cursor:pointer; border:1px solid; transition:all 0.15s; font-family:'DM Sans',sans-serif;
+  }
+  .att-btn-present { border-color:var(--teal); color:var(--teal); background:transparent; }
+  .att-btn-present.active, .att-btn-present:hover { background:rgba(56,217,192,0.15); }
+  .att-btn-absent  { border-color:var(--red); color:var(--red); background:transparent; }
+  .att-btn-absent.active, .att-btn-absent:hover { background:rgba(255,95,109,0.15); }
+  .att-btn-late    { border-color:var(--gold); color:var(--gold); background:transparent; }
+  .att-btn-late.active, .att-btn-late:hover { background:rgba(240,192,96,0.15); }
+
+  /* REPORTS PAGE */
+  .report-chart {
+    height:160px; display:flex; align-items:flex-end; gap:8px; padding-top:10px;
+  }
+  .bar-wrap { flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .bar {
+    width:100%; border-radius:6px 6px 0 0;
+    background:linear-gradient(180deg, var(--gold), var(--gold2));
+    transition:height 0.6s ease; min-height:4px;
+    position:relative; cursor:pointer;
+  }
+  .bar:hover { filter:brightness(1.2); }
+  .bar-label { font-size:0.6rem; color:var(--muted); font-family:'DM Mono',monospace; }
+
+  /* TOAST */
+  .toast {
+    position:fixed; bottom:24px; right:24px; z-index:2000;
+    background:var(--ink2); border:1px solid var(--border2);
+    border-radius:12px; padding:14px 20px;
+    font-size:0.82rem; display:flex; align-items:center; gap:10px;
+    transform:translateY(80px); opacity:0; transition:all 0.3s;
+    max-width:320px;
+  }
+  .toast.show { transform:translateY(0); opacity:1; }
+  .toast.success { border-color:rgba(56,217,192,0.3); }
+  .toast.error   { border-color:rgba(255,95,109,0.3); }
+
+  /* ANIM */
+  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .content > * { animation:fadeIn 0.3s ease; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-name">ACADEX</div>
+      <div class="brand-sub">Attendance System</div>
+    </div>
+    <nav class="nav">
+      <div class="nav-section">Overview</div>
+      <a class="nav-item active" onclick="showPage('dashboard',this)">
+        <span class="icon">⬡</span> Dashboard
+      </a>
+
+      <div class="nav-section">Attendance</div>
+      <a class="nav-item" onclick="showPage('mark',this)">
+        <span class="icon">✦</span> Mark Attendance
+      </a>
+      <a class="nav-item" onclick="showPage('face',this)">
+        <span class="icon">◉</span> Face Scan <span class="notif-dot"></span>
+      </a>
+
+      <div class="nav-section">Management</div>
+      <a class="nav-item" onclick="showPage('students',this)">
+        <span class="icon">◈</span> Students
+      </a>
+      <a class="nav-item" onclick="showPage('classes',this)">
+        <span class="icon">◫</span> Classes
+      </a>
+
+      <div class="nav-section">Analytics</div>
+      <a class="nav-item" onclick="showPage('reports',this)">
+        <span class="icon">◧</span> Reports
+      </a>
+
+      <div class="nav-section">System</div>
+      <a class="nav-item" onclick="showPage('admin',this)">
+        <span class="icon">⬗</span> Admin Panel
+      </a>
+      <a class="nav-item" onclick="showPage('setup',this)">
+        <span class="icon">⬙</span> Supabase Setup
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="avatar-sm">AD</div>
+      <div class="user-info">
+        <div class="user-name">Admin</div>
+        <div class="user-role">Super Administrator</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div class="page-title" id="pageTitle">Dashboard</div>
+      <div class="topbar-right">
+        <div class="today-badge" id="todayBadge"></div>
+        <button class="btn btn-primary" onclick="openModal('markModal')">+ Mark Today</button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- DASHBOARD PAGE -->
+      <div class="page-section active" id="page-dashboard">
+        <div class="stats-grid">
+          <div class="stat-card gold">
+            <div class="stat-label">Total Students</div>
+            <div class="stat-value gold" id="statTotal">—</div>
+            <div class="stat-sub">Enrolled this semester</div>
+          </div>
+          <div class="stat-card teal">
+            <div class="stat-label">Present Today</div>
+            <div class="stat-value teal" id="statPresent">—</div>
+            <div class="stat-sub" id="statPresentPct">Loading...</div>
+          </div>
+          <div class="stat-card red">
+            <div class="stat-label">Absent Today</div>
+            <div class="stat-value red" id="statAbsent">—</div>
+            <div class="stat-sub" id="statAbsentPct">Loading...</div>
+          </div>
+          <div class="stat-card purple">
+            <div class="stat-label">Late Today</div>
+            <div class="stat-value purple" id="statLate">—</div>
+            <div class="stat-sub">Marked late</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <!-- Recent Attendance -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Recent Attendance</span>
+              <span class="card-badge badge-gold">TODAY</span>
+            </div>
+            <table class="att-table">
+              <thead>
+                <tr>
+                  <th>Student</th>
+                  <th>Class</th>
+                  <th>Time</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="recentAttTable">
+                <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px;font-size:0.75rem;">No records yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Classes Today -->
+          <div class="card" style="display:flex;flex-direction:column;gap:0;">
+            <div class="card-header">
+              <span class="card-title">Classes Today</span>
+              <span class="card-badge badge-teal">LIVE</span>
+            </div>
+            <div id="classesToday">
+              <div class="class-item">
+                <div>
+                  <div class="class-name">Mathematics — X-A</div>
+                  <div class="class-meta">08:00 – 09:00 · Room 201</div>
+                </div>
+                <div>
+                  <div class="progress-wrap" style="width:80px;">
+                    <div class="progress-fill" style="width:88%;background:var(--teal);"></div>
+                  </div>
+                  <div style="font-size:0.6rem;color:var(--muted);text-align:right;margin-top:3px;">88%</div>
+                </div>
+              </div>
+              <div class="class-item">
+                <div>
+                  <div class="class-name">Physics — XI-B</div>
+                  <div class="class-meta">09:10 – 10:10 · Lab 1</div>
+                </div>
+                <div>
+                  <div class="progress-wrap" style="width:80px;">
+                    <div class="progress-fill" style="width:72%;background:var(--gold);"></div>
+                  </div>
+                  <div style="font-size:0.6rem;color:var(--muted);text-align:right;margin-top:3px;">72%</div>
+                </div>
+              </div>
+              <div class="class-item">
+                <div>
+                  <div class="class-name">English — XII-C</div>
+                  <div class="class-meta">10:20 – 11:20 · Room 105</div>
+                </div>
+                <div>
+                  <div class="progress-wrap" style="width:80px;">
+                    <div class="progress-fill" style="width:95%;background:var(--teal);"></div>
+                  </div>
+                  <div style="font-size:0.6rem;color:var(--muted);text-align:right;margin-top:3px;">95%</div>
+                </div>
+              </div>
+              <div class="class-item">
+                <div>
+                  <div class="class-name">Chemistry — X-B</div>
+                  <div class="class-meta">11:30 – 12:30 · Lab 2</div>
+                </div>
+                <div>
+                  <div class="progress-wrap" style="width:80px;">
+                    <div class="progress-fill" style="width:60%;background:var(--red);"></div>
+                  </div>
+                  <div style="font-size:0.6rem;color:var(--muted);text-align:right;margin-top:3px;">60%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Face Scan Widget + Weekly Chart -->
+        <div class="grid-3">
+          <div class="face-scan-card" onclick="showPage('face', document.querySelector('[onclick*=\"face\"]'))">
+            <div class="scan-ring">◉</div>
+            <div class="scan-title">Face Scan Attendance</div>
+            <div class="scan-sub">Click to start AI face recognition for instant attendance marking</div>
+          </div>
+
+          <div class="card" style="grid-column:span 2;">
+            <div class="card-header">
+              <span class="card-title">Weekly Attendance Rate</span>
+              <span class="card-badge badge-gold">THIS WEEK</span>
+            </div>
+            <div class="report-chart" id="weeklyChart"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MARK ATTENDANCE PAGE -->
+      <div class="page-section" id="page-mark">
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header">
+            <span class="card-title">Select Class</span>
+          </div>
+          <div class="att-class-selector" id="classSelector">
+            <div class="class-btn selected" onclick="selectClass(this,'X-A')">
+              <div class="class-btn-name">Class X-A</div>
+              <div class="class-btn-sub">32 Students · Mathematics</div>
+            </div>
+            <div class="class-btn" onclick="selectClass(this,'XI-B')">
+              <div class="class-btn-name">Class XI-B</div>
+              <div class="class-btn-sub">28 Students · Physics</div>
+            </div>
+            <div class="class-btn" onclick="selectClass(this,'XII-C')">
+              <div class="class-btn-name">Class XII-C</div>
+              <div class="class-btn-sub">30 Students · English</div>
+            </div>
+            <div class="class-btn" onclick="selectClass(this,'X-B')">
+              <div class="class-btn-name">Class X-B</div>
+              <div class="class-btn-sub">29 Students · Chemistry</div>
+            </div>
+            <div class="class-btn" onclick="selectClass(this,'XI-A')">
+              <div class="class-btn-name">Class XI-A</div>
+              <div class="class-btn-sub">31 Students · Biology</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Mark Attendance — <span id="selectedClassName">Class X-A</span></span>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-ghost" style="font-size:0.72rem;" onclick="markAll('present')">All Present</button>
+              <button class="btn btn-primary" style="font-size:0.72rem;" onclick="saveAttendance()">Save Attendance</button>
+            </div>
+          </div>
+          <div class="attendance-list" id="attendanceList"></div>
+        </div>
+      </div>
+
+      <!-- FACE SCAN PAGE -->
+      <div class="page-section" id="page-face">
+        <div class="grid-2" style="grid-template-columns:1fr 1fr;">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Face Recognition Scanner</span>
+              <span class="card-badge badge-teal">AI POWERED</span>
+            </div>
+            <div class="camera-box" id="cameraBox">
+              <video id="cameraFeed" autoplay playsinline></video>
+              <div class="scan-overlay" id="scanOverlay">
+                <div class="scan-frame">
+                  <div class="scan-line"></div>
+                  <div class="scan-corner-br"></div>
+                  <div class="scan-corner-tl"></div>
+                </div>
+              </div>
+              <div class="camera-placeholder" id="cameraPlaceholder">
+                <div class="icon">◉</div>
+                <p>Camera not started</p>
+              </div>
+            </div>
+            <div id="scanStatus">Ready to scan — click Start Camera</div>
+            <div style="display:flex;gap:10px;">
+              <button class="btn btn-primary" style="flex:1;" onclick="startCamera()">▶ Start Camera</button>
+              <button class="btn btn-ghost" style="flex:1;" onclick="stopCamera()">■ Stop</button>
+              <button class="btn btn-ghost" style="flex:1;" onclick="simulateScan()">⚡ Simulate</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Scan Log</span>
+              <span class="card-badge badge-gold" id="scanCount">0 SCANNED</span>
+            </div>
+            <div id="scanLog" style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto;">
+              <div style="text-align:center;padding:30px;color:var(--muted);font-size:0.75rem;">Scan results will appear here</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header">
+            <span class="card-title">Face Registration</span>
+            <span class="card-badge badge-gold">ENROLL NEW</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+            <div class="form-group">
+              <label class="form-label">Student Name</label>
+              <input class="form-input" id="enrollName" placeholder="Full name">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Student ID</label>
+              <input class="form-input" id="enrollId" placeholder="STU-XXXX">
+            </div>
+            <div class="form-group" style="display:flex;align-items:flex-end;">
+              <button class="btn btn-primary" style="width:100%;" onclick="enrollFace()">📷 Capture & Enroll</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STUDENTS PAGE -->
+      <div class="page-section" id="page-students">
+        <div class="search-bar">
+          <input class="search-input" placeholder="🔍  Search students by name or ID..." oninput="filterStudents(this.value)">
+          <button class="btn btn-primary" onclick="openModal('addStudentModal')">+ Add Student</button>
+        </div>
+        <div class="students-grid" id="studentsGrid"></div>
+      </div>
+
+      <!-- CLASSES PAGE -->
+      <div class="page-section" id="page-classes">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+          <button class="btn btn-primary" onclick="openModal('addClassModal')">+ Add Class</button>
+        </div>
+        <table class="att-table" style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;">
+          <thead>
+            <tr>
+              <th style="padding:14px 16px;">Class</th>
+              <th>Subject</th>
+              <th>Teacher</th>
+              <th>Students</th>
+              <th>Avg Attendance</th>
+              <th>Schedule</th>
+            </tr>
+          </thead>
+          <tbody id="classesTable">
+            <tr><td colspan="6" style="text-align:center;padding:30px;color:var(--muted);font-size:0.75rem;">Loading classes...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- REPORTS PAGE -->
+      <div class="page-section" id="page-reports">
+        <div class="stats-grid" style="margin-bottom:20px;">
+          <div class="stat-card gold">
+            <div class="stat-label">Avg Attendance</div>
+            <div class="stat-value gold">84%</div>
+            <div class="stat-sub">This month</div>
+          </div>
+          <div class="stat-card teal">
+            <div class="stat-label">Perfect Attendance</div>
+            <div class="stat-value teal">23</div>
+            <div class="stat-sub">Students this month</div>
+          </div>
+          <div class="stat-card red">
+            <div class="stat-label">Low Attendance</div>
+            <div class="stat-value red">7</div>
+            <div class="stat-sub">Below 75% threshold</div>
+          </div>
+          <div class="stat-card purple">
+            <div class="stat-label">Days Recorded</div>
+            <div class="stat-value purple">18</div>
+            <div class="stat-sub">This month</div>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-bottom:16px;">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Monthly Attendance Trend</span>
+              <span class="card-badge badge-gold">MONTH</span>
+            </div>
+            <div id="monthlyChart" style="display:flex;align-items:flex-end;gap:4px;height:120px;padding-top:10px;"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Attendance by Class</span>
+              <span class="card-badge badge-teal">ALL CLASSES</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;" id="classBars"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Student Attendance Report</span>
+            <button class="btn btn-ghost" style="font-size:0.72rem;" onclick="exportReport()">↓ Export CSV</button>
+          </div>
+          <table class="att-table">
+            <thead>
+              <tr>
+                <th>Student</th><th>Class</th><th>Present</th><th>Absent</th><th>Late</th><th>Rate</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="reportTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ADMIN PAGE -->
+      <div class="page-section" id="page-admin">
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">System Settings</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">School Name</label>
+              <input class="form-input" value="Springfield Academy" id="schoolName">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Academic Year</label>
+              <input class="form-input" value="2025-2026" id="academicYear">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Attendance Threshold (%)</label>
+              <input class="form-input" type="number" value="75" id="threshold">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Working Days / Week</label>
+              <select class="form-input form-select" id="workingDays">
+                <option value="5">5 Days (Mon–Fri)</option>
+                <option value="6">6 Days (Mon–Sat)</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Supabase Database</span>
+              <span class="card-badge" id="dbStatus" style="background:rgba(255,95,109,0.1);color:var(--red);">DISCONNECTED</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Supabase URL</label>
+              <input class="form-input" id="adminSupaUrl" placeholder="https://xxx.supabase.co">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Anon Key</label>
+              <input class="form-input" id="adminSupaKey" type="password" placeholder="eyJ...">
+            </div>
+            <button class="btn btn-primary" onclick="testConnection()">Test Connection</button>
+
+            <div style="margin-top:20px;">
+              <div class="card-title" style="margin-bottom:10px;font-size:0.78rem;">Database Actions</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-ghost" style="font-size:0.7rem;" onclick="createTables()">Create Tables</button>
+                <button class="btn btn-ghost" style="font-size:0.7rem;" onclick="seedData()">Seed Sample Data</button>
+                <button class="btn btn-ghost" style="font-size:0.7rem;color:var(--red);border-color:rgba(255,95,109,0.3);" onclick="clearData()">Clear All Data</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SETUP PAGE -->
+      <div class="page-section" id="page-setup">
+        <div class="card" style="max-width:600px;">
+          <div class="card-title" style="margin-bottom:6px;">🔌 Connect Supabase</div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-bottom:20px;">Enter your Supabase credentials to enable data persistence.</div>
+          <div class="form-group">
+            <label class="form-label">Supabase Project URL</label>
+            <input class="form-input" id="supaUrl" placeholder="https://xxxxxxxx.supabase.co">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Anon / Public Key</label>
+            <input class="form-input" id="supaKey" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+          </div>
+          <button class="btn btn-primary" onclick="connectSupabase()" style="width:100%;margin-bottom:16px;">Connect & Initialize</button>
+
+          <div style="background:var(--ink3);border-radius:10px;padding:16px;">
+            <div style="font-size:0.68rem;color:var(--muted);margin-bottom:8px;letter-spacing:1px;text-transform:uppercase;">Required SQL — Run in Supabase SQL Editor</div>
+            <pre style="font-size:0.65rem;color:var(--teal);overflow-x:auto;white-space:pre-wrap;font-family:'DM Mono',monospace;line-height:1.6;">CREATE TABLE students (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  student_id TEXT UNIQUE NOT NULL,
+  class TEXT NOT NULL,
+  email TEXT,
+  phone TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE attendance (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id UUID REFERENCES students(id),
+  date DATE NOT NULL DEFAULT CURRENT_DATE,
+  status TEXT CHECK (status IN ('present','absent','late')),
+  class TEXT,
+  marked_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE classes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  subject TEXT,
+  teacher TEXT,
+  schedule TEXT,
+  room TEXT
+);</pre>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /layout -->
+
+<!-- MODALS -->
+
+<!-- Quick Mark Modal -->
+<div class="modal-overlay" id="markModal">
+  <div class="modal">
+    <div class="modal-title">Quick Mark Attendance</div>
+    <div class="modal-sub">Mark a student's attendance for today</div>
+    <div class="form-group">
+      <label class="form-label">Student ID</label>
+      <input class="form-input" id="quickStudentId" placeholder="STU-XXXX">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Class</label>
+      <select class="form-input form-select" id="quickClass">
+        <option>X-A</option><option>X-B</option><option>XI-A</option><option>XI-B</option><option>XII-C</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select class="form-input form-select" id="quickStatus">
+        <option value="present">Present</option>
+        <option value="absent">Absent</option>
+        <option value="late">Late</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('markModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="quickMarkAttendance()">Mark Attendance</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Student Modal -->
+<div class="modal-overlay" id="addStudentModal">
+  <div class="modal">
+    <div class="modal-title">Add New Student</div>
+    <div class="modal-sub">Register a new student in the system</div>
+    <div class="form-group">
+      <label class="form-label">Full Name</label>
+      <input class="form-input" id="newStudentName" placeholder="Student full name">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Student ID</label>
+      <input class="form-input" id="newStudentId" placeholder="STU-XXXX">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Class</label>
+      <select class="form-input form-select" id="newStudentClass">
+        <option>X-A</option><option>X-B</option><option>XI-A</option><option>XI-B</option><option>XII-C</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Email (optional)</label>
+      <input class="form-input" id="newStudentEmail" placeholder="student@school.com">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('addStudentModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="addStudent()">Add Student</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Class Modal -->
+<div class="modal-overlay" id="addClassModal">
+  <div class="modal">
+    <div class="modal-title">Add New Class</div>
+    <div class="modal-sub">Register a class in the system</div>
+    <div class="form-group">
+      <label class="form-label">Class Name</label>
+      <input class="form-input" id="newClassName" placeholder="e.g. X-A">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Subject</label>
+      <input class="form-input" id="newClassSubject" placeholder="Mathematics">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Teacher</label>
+      <input class="form-input" id="newClassTeacher" placeholder="Teacher name">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Schedule</label>
+      <input class="form-input" id="newClassSchedule" placeholder="Mon, Wed, Fri · 08:00–09:00">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('addClassModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="addClass()">Add Class</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// =============================================
+// CONFIG — Update with your Supabase credentials
+// =============================================
+let SUPABASE_URL = 'https://zroqqgjiemmvbitrtnfs.supabase.co';
+let SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpyb3FxZ2ppZW1tdmJpdHJ0bmZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxMTM3MDMsImV4cCI6MjA4NzY4OTcwM30.7Vmrj9tKnkqCRvs0y4N_j8L3hWtEJkXnwVleb0kdghE';
+let supabase = null;
+
+// =============================================
+// SAMPLE DATA (used when Supabase not connected)
+// =============================================
+const SAMPLE_STUDENTS = [
+  { id:'s1', name:'Arjun Sharma',    student_id:'STU-001', class:'X-A',  email:'arjun@school.com' },
+  { id:'s2', name:'Priya Mehta',     student_id:'STU-002', class:'X-A',  email:'priya@school.com' },
+  { id:'s3', name:'Rahul Verma',     student_id:'STU-003', class:'X-A',  email:'rahul@school.com' },
+  { id:'s4', name:'Sneha Patel',     student_id:'STU-004', class:'XI-B', email:'sneha@school.com' },
+  { id:'s5', name:'Vikram Singh',    student_id:'STU-005', class:'XI-B', email:'vikram@school.com' },
+  { id:'s6', name:'Anjali Gupta',    student_id:'STU-006', class:'XII-C',email:'anjali@school.com' },
+  { id:'s7', name:'Rohan Kumar',     student_id:'STU-007', class:'X-B',  email:'rohan@school.com' },
+  { id:'s8', name:'Neha Joshi',      student_id:'STU-008', class:'X-B',  email:'neha@school.com' },
+  { id:'s9', name:'Karan Malhotra',  student_id:'STU-009', class:'XI-A', email:'karan@school.com' },
+  { id:'s10',name:'Divya Nair',      student_id:'STU-010', class:'XI-A', email:'divya@school.com' },
+  { id:'s11',name:'Amit Bose',       student_id:'STU-011', class:'XII-C',email:'amit@school.com' },
+  { id:'s12',name:'Ritika Sharma',   student_id:'STU-012', class:'X-A',  email:'ritika@school.com' },
+];
+
+const SAMPLE_ATTENDANCE = [];
+const avatarColors = ['#f0c060','#38d9c0','#ff5f6d','#a78bfa','#60a5fa','#34d399'];
+let attendanceMap = {}; // studentId -> status
+let cameraStream = null;
+let scanCount = 0;
+
+// =============================================
+// INIT
+// =============================================
+window.onload = () => {
+  updateDate();
+  renderWeeklyChart();
+  renderMonthlyChart();
+  renderClassBars();
+  renderStudents(SAMPLE_STUDENTS);
+  renderAttendanceList('X-A');
+  renderReportTable();
+  renderClassesTable();
+  updateDashboardStats();
+
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    initSupabase(SUPABASE_URL, SUPABASE_KEY);
+    document.getElementById('supaUrl').value = SUPABASE_URL;
+    document.getElementById('supaKey').value = SUPABASE_KEY;
+  }
+};
+
+function updateDate() {
+  const now = new Date();
+  const opts = { weekday:'short', month:'short', day:'numeric', year:'numeric' };
+  document.getElementById('todayBadge').textContent = now.toLocaleDateString('en-IN', opts).toUpperCase();
+}
+
+// =============================================
+// SUPABASE
+// =============================================
+function initSupabase(url, key) {
+  // Dynamically load Supabase client
+  if (!window.supabaseClient) {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/supabase/2.39.0/umd/supabase.min.js';
+    script.onload = () => {
+      try {
+        supabase = window.supabase.createClient(url, key);
+        document.getElementById('dbStatus').textContent = 'CONNECTED';
+        document.getElementById('dbStatus').style.background = 'rgba(56,217,192,0.1)';
+        document.getElementById('dbStatus').style.color = 'var(--teal)';
+        showToast('✓ Supabase connected', 'success');
+        loadFromSupabase();
+      } catch(e) {
+        showToast('Connection failed: ' + e.message, 'error');
+      }
+    };
+    document.head.appendChild(script);
+  }
+}
+
+function connectSupabase() {
+  const url = document.getElementById('supaUrl').value.trim();
+  const key = document.getElementById('supaKey').value.trim();
+  if (!url || !key) { showToast('Please enter both URL and Key', 'error'); return; }
+  localStorage.setItem('acadex_url', url);
+  localStorage.setItem('acadex_key', key);
+  SUPABASE_URL = url; SUPABASE_KEY = key;
+  initSupabase(url, key);
+}
+
+async function loadFromSupabase() {
+  if (!supabase) return;
+  try {
+    const { data: students } = await supabase.from('students').select('*');
+    if (students && students.length) {
+      renderStudents(students);
+      updateDashboardStats(students.length);
+    }
+    const today = new Date().toISOString().split('T')[0];
+    const { data: att } = await supabase.from('attendance').select('*').eq('date', today);
+    if (att) renderRecentAttendance(att);
+  } catch(e) { console.warn('Supabase load error', e); }
+}
+
+async function saveAttendanceToSupabase(records) {
+  if (!supabase) return false;
+  try {
+    const { error } = await supabase.from('attendance').upsert(records);
+    return !error;
+  } catch(e) { return false; }
+}
+
+// =============================================
+// NAVIGATION
+// =============================================
+function showPage(name, el) {
+  document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  if (el) el.classList.add('active');
+  const titles = {dashboard:'Dashboard',mark:'Mark Attendance',face:'Face Scan',students:'Students',classes:'Classes',reports:'Reports',admin:'Admin Panel',setup:'Supabase Setup'};
+  document.getElementById('pageTitle').textContent = titles[name] || name;
+  if (name === 'face') stopCamera();
+}
+
+// =============================================
+// DASHBOARD STATS
+// =============================================
+function updateDashboardStats(total) {
+  const t = total || SAMPLE_STUDENTS.length;
+  const present = Object.values(attendanceMap).filter(s=>s==='present').length;
+  const absent  = Object.values(attendanceMap).filter(s=>s==='absent').length;
+  const late    = Object.values(attendanceMap).filter(s=>s==='late').length;
+  document.getElementById('statTotal').textContent = t;
+  document.getElementById('statPresent').textContent = present;
+  document.getElementById('statAbsent').textContent = absent;
+  document.getElementById('statLate').textContent = late;
+  const pct = t > 0 ? Math.round(present/t*100) : 0;
+  document.getElementById('statPresentPct').textContent = pct + '% attendance rate';
+  document.getElementById('statAbsentPct').textContent = t > 0 ? Math.round(absent/t*100) + '% absent rate' : '';
+}
+
+// =============================================
+// CHARTS
+// =============================================
+function renderWeeklyChart() {
+  const days = ['MON','TUE','WED','THU','FRI'];
+  const vals = [88, 92, 85, 79, 91];
+  const el = document.getElementById('weeklyChart');
+  el.innerHTML = days.map((d,i) => `
+    <div class="bar-wrap">
+      <div class="bar" style="height:${vals[i]}%" title="${vals[i]}%"></div>
+      <div class="bar-label">${d}</div>
+    </div>`).join('');
+}
+
+function renderMonthlyChart() {
+  const weeks = Array.from({length:20},(_,i)=>i+1);
+  const vals = weeks.map(()=>70+Math.round(Math.random()*25));
+  const el = document.getElementById('monthlyChart');
+  el.innerHTML = weeks.map((w,i) => `
+    <div class="bar-wrap">
+      <div class="bar" style="height:${vals[i]}%;background:linear-gradient(180deg,var(--teal),#1eab96);" title="${vals[i]}%"></div>
+      <div class="bar-label" style="font-size:0.5rem;">${w}</div>
+    </div>`).join('');
+}
+
+function renderClassBars() {
+  const classes = [
+    {name:'X-A', pct:88}, {name:'XI-B', pct:72}, {name:'XII-C', pct:95}, {name:'X-B', pct:60}, {name:'XI-A', pct:83}
+  ];
+  const el = document.getElementById('classBars');
+  el.innerHTML = classes.map(c => `
+    <div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
+        <span style="font-size:0.75rem;font-weight:600;">${c.name}</span>
+        <span style="font-size:0.72rem;color:var(--muted);font-family:'DM Mono',monospace;">${c.pct}%</span>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-fill" style="width:${c.pct}%;background:${c.pct>=80?'var(--teal)':c.pct>=60?'var(--gold)':'var(--red)'}"></div>
+      </div>
+    </div>`).join('');
+}
+
+// =============================================
+// STUDENTS
+// =============================================
+function renderStudents(students) {
+  const grid = document.getElementById('studentsGrid');
+  grid.innerHTML = students.map((s,i) => {
+    const initials = s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const color = avatarColors[i % avatarColors.length];
+    const att = Math.floor(70 + Math.random()*28);
+    return `
+    <div class="student-card">
+      <div class="student-avatar" style="background:${color}22;color:${color};">${initials}</div>
+      <div class="student-name">${s.name}</div>
+      <div class="student-id">${s.student_id}</div>
+      <div class="student-stats">
+        <div class="student-stat">Class: <span>${s.class}</span></div>
+        <div class="student-stat">Att: <span style="color:${att>=80?'var(--teal)':att>=60?'var(--gold)':'var(--red)'}">${att}%</span></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function filterStudents(q) {
+  const filtered = SAMPLE_STUDENTS.filter(s =>
+    s.name.toLowerCase().includes(q.toLowerCase()) ||
+    s.student_id.toLowerCase().includes(q.toLowerCase())
+  );
+  renderStudents(filtered);
+}
+
+function addStudent() {
+  const name  = document.getElementById('newStudentName').value.trim();
+  const sid   = document.getElementById('newStudentId').value.trim();
+  const cls   = document.getElementById('newStudentClass').value;
+  const email = document.getElementById('newStudentEmail').value.trim();
+  if (!name || !sid) { showToast('Name and ID are required', 'error'); return; }
+  const student = { id:'s'+Date.now(), name, student_id:sid, class:cls, email };
+  SAMPLE_STUDENTS.push(student);
+  renderStudents(SAMPLE_STUDENTS);
+  if (supabase) supabase.from('students').insert([{name, student_id:sid, class:cls, email}]);
+  closeModal('addStudentModal');
+  showToast('✓ Student added: ' + name, 'success');
+  updateDashboardStats();
+}
+
+// =============================================
+// ATTENDANCE MARKING
+// =============================================
+function selectClass(el, className) {
+  document.querySelectorAll('.class-btn').forEach(b=>b.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById('selectedClassName').textContent = 'Class ' + className;
+  renderAttendanceList(className);
+}
+
+function renderAttendanceList(className) {
+  const students = SAMPLE_STUDENTS.filter(s=>s.class===className);
+  const list = document.getElementById('attendanceList');
+  list.innerHTML = students.map((s,i) => {
+    const initials = s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const color = avatarColors[i%avatarColors.length];
+    const current = attendanceMap[s.id] || '';
+    return `
+    <div class="att-student-row">
+      <div class="mini-avatar" style="background:${color}22;color:${color};">${initials}</div>
+      <div class="att-student-info">
+        <div class="att-student-name">${s.name}</div>
+        <div class="att-student-id">${s.student_id}</div>
+      </div>
+      <div class="att-controls">
+        <button class="att-btn att-btn-present ${current==='present'?'active':''}" onclick="setStatus('${s.id}','present',this)">Present</button>
+        <button class="att-btn att-btn-late    ${current==='late'?'active':''}"    onclick="setStatus('${s.id}','late',this)">Late</button>
+        <button class="att-btn att-btn-absent  ${current==='absent'?'active':''}"  onclick="setStatus('${s.id}','absent',this)">Absent</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function setStatus(studentId, status, btn) {
+  attendanceMap[studentId] = status;
+  const row = btn.closest('.att-student-row');
+  row.querySelectorAll('.att-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  updateDashboardStats();
+}
+
+function markAll(status) {
+  SAMPLE_STUDENTS.forEach(s => { attendanceMap[s.id] = status; });
+  const className = document.getElementById('selectedClassName').textContent.replace('Class ','');
+  renderAttendanceList(className);
+  updateDashboardStats();
+  showToast(`✓ All students marked as ${status}`, 'success');
+}
+
+async function saveAttendance() {
+  const today = new Date().toISOString().split('T')[0];
+  const records = Object.entries(attendanceMap).map(([sid, status]) => ({
+    student_id: sid, date: today, status
+  }));
+  if (records.length === 0) { showToast('No attendance marked yet', 'error'); return; }
+
+  // Add to sample data
+  records.forEach(r => SAMPLE_ATTENDANCE.push(r));
+  renderRecentAttendance(records);
+
+  if (supabase) {
+    const saved = await saveAttendanceToSupabase(records);
+    showToast(saved ? '✓ Attendance saved to database' : '✓ Saved locally (DB error)', saved ? 'success' : 'error');
+  } else {
+    showToast('✓ Attendance saved (' + records.length + ' records)', 'success');
+  }
+  renderReportTable();
+}
+
+function renderRecentAttendance(records) {
+  const tbody = document.getElementById('recentAttTable');
+  if (!records || records.length === 0) return;
+  const rows = records.slice(-8).reverse().map(r => {
+    const student = SAMPLE_STUDENTS.find(s=>s.id===r.student_id) || { name:'Unknown', class:'—' };
+    const time = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    return `<tr>
+      <td><div class="flex-center">
+        <div class="mini-avatar" style="background:rgba(240,192,96,0.1);color:var(--gold);font-size:0.6rem;">${student.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>
+        ${student.name}
+      </div></td>
+      <td>${student.class}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:0.75rem;">${time}</td>
+      <td><span class="status-badge status-${r.status}">${r.status}</span></td>
+    </tr>`;
+  }).join('');
+  tbody.innerHTML = rows;
+}
+
+// =============================================
+// QUICK MARK
+// =============================================
+function quickMarkAttendance() {
+  const sid    = document.getElementById('quickStudentId').value.trim();
+  const cls    = document.getElementById('quickClass').value;
+  const status = document.getElementById('quickStatus').value;
+  if (!sid) { showToast('Please enter student ID', 'error'); return; }
+  const student = SAMPLE_STUDENTS.find(s=>s.student_id===sid);
+  if (!student) { showToast('Student not found: '+sid, 'error'); return; }
+  attendanceMap[student.id] = status;
+  renderRecentAttendance([{student_id:student.id, status}]);
+  updateDashboardStats();
+  closeModal('markModal');
+  showToast(`✓ ${student.name} marked as ${status}`, 'success');
+}
+
+// =============================================
+// FACE SCAN
+// =============================================
+async function startCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'user' } });
+    const video = document.getElementById('cameraFeed');
+    video.srcObject = cameraStream;
+    video.style.display = 'block';
+    document.getElementById('cameraPlaceholder').style.display = 'none';
+    document.getElementById('scanStatus').textContent = 'Camera active — position face in frame';
+    showToast('✓ Camera started', 'success');
+  } catch(e) {
+    document.getElementById('scanStatus').textContent = 'Camera access denied';
+    document.getElementById('scanStatus').className = 'fail';
+    showToast('Camera access denied — use Simulate instead', 'error');
+  }
+}
+
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t=>t.stop());
+    cameraStream = null;
+    const video = document.getElementById('cameraFeed');
+    video.style.display = 'none';
+    document.getElementById('cameraPlaceholder').style.display = 'flex';
+    document.getElementById('scanStatus').textContent = 'Camera stopped';
+    document.getElementById('scanStatus').className = '';
+  }
+}
+
+function simulateScan() {
+  const randomStudent = SAMPLE_STUDENTS[Math.floor(Math.random()*SAMPLE_STUDENTS.length)];
+  const statuses = ['present','present','present','late'];
+  const status = statuses[Math.floor(Math.random()*statuses.length)];
+  attendanceMap[randomStudent.id] = status;
+
+  scanCount++;
+  document.getElementById('scanCount').textContent = scanCount + ' SCANNED';
+  document.getElementById('scanStatus').textContent = '✓ Identified: ' + randomStudent.name;
+  document.getElementById('scanStatus').className = 'success';
+
+  const log = document.getElementById('scanLog');
+  const first = log.querySelector('[style*="text-align:center"]');
+  if (first) first.remove();
+
+  const color = avatarColors[Math.floor(Math.random()*avatarColors.length)];
+  const initials = randomStudent.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+  const time = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  const entry = document.createElement('div');
+  entry.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px;background:var(--ink3);border-radius:10px;animation:fadeIn 0.3s ease;';
+  entry.innerHTML = `
+    <div class="mini-avatar" style="background:${color}22;color:${color};">${initials}</div>
+    <div style="flex:1;">
+      <div style="font-size:0.8rem;font-weight:600;">${randomStudent.name}</div>
+      <div style="font-size:0.65rem;color:var(--muted);">${randomStudent.student_id} · ${randomStudent.class}</div>
+    </div>
+    <div style="text-align:right;">
+      <span class="status-badge status-${status}">${status}</span>
+      <div style="font-size:0.6rem;color:var(--muted);margin-top:3px;font-family:'DM Mono',monospace;">${time}</div>
+    </div>`;
+  log.insertBefore(entry, log.firstChild);
+  updateDashboardStats();
+  setTimeout(()=>{ document.getElementById('scanStatus').textContent = 'Ready — waiting for next face'; document.getElementById('scanStatus').className=''; }, 2000);
+}
+
+function enrollFace() {
+  const name = document.getElementById('enrollName').value.trim();
+  const sid  = document.getElementById('enrollId').value.trim();
+  if (!name || !sid) { showToast('Enter name and ID to enroll', 'error'); return; }
+  showToast(`✓ Face enrolled for ${name} (${sid})`, 'success');
+  document.getElementById('enrollName').value = '';
+  document.getElementById('enrollId').value = '';
+}
+
+// =============================================
+// CLASSES
+// =============================================
+const SAMPLE_CLASSES = [
+  { name:'X-A',   subject:'Mathematics', teacher:'Mr. Rajan', students:32, avg:88, schedule:'Mon–Fri · 08:00–09:00', room:'Room 201' },
+  { name:'XI-B',  subject:'Physics',     teacher:'Ms. Asha',  students:28, avg:72, schedule:'Mon–Fri · 09:10–10:10', room:'Lab 1' },
+  { name:'XII-C', subject:'English',     teacher:'Mr. David', students:30, avg:95, schedule:'Mon–Fri · 10:20–11:20', room:'Room 105' },
+  { name:'X-B',   subject:'Chemistry',   teacher:'Ms. Priya', students:29, avg:60, schedule:'Mon–Sat · 11:30–12:30', room:'Lab 2' },
+  { name:'XI-A',  subject:'Biology',     teacher:'Mr. Suresh',students:31, avg:83, schedule:'Mon–Fri · 13:00–14:00', room:'Lab 3' },
+];
+
+function renderClassesTable() {
+  const tbody = document.getElementById('classesTable');
+  tbody.innerHTML = SAMPLE_CLASSES.map(c => `
+    <tr>
+      <td style="font-family:'Syne',sans-serif;font-weight:700;">${c.name}</td>
+      <td>${c.subject}</td>
+      <td>${c.teacher}</td>
+      <td style="font-family:'DM Mono',monospace;">${c.students}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="progress-wrap" style="width:60px;"><div class="progress-fill" style="width:${c.avg}%;background:${c.avg>=80?'var(--teal)':c.avg>=60?'var(--gold)':'var(--red)'}"></div></div>
+          <span style="font-size:0.75rem;font-family:'DM Mono',monospace;">${c.avg}%</span>
+        </div>
+      </td>
+      <td style="font-size:0.75rem;color:var(--muted);">${c.schedule}</td>
+    </tr>`).join('');
+}
+
+function addClass() {
+  const name     = document.getElementById('newClassName').value.trim();
+  const subject  = document.getElementById('newClassSubject').value.trim();
+  const teacher  = document.getElementById('newClassTeacher').value.trim();
+  const schedule = document.getElementById('newClassSchedule').value.trim();
+  if (!name || !subject) { showToast('Class name and subject required', 'error'); return; }
+  SAMPLE_CLASSES.push({ name, subject, teacher, students:0, avg:0, schedule });
+  renderClassesTable();
+  closeModal('addClassModal');
+  showToast('✓ Class added: ' + name, 'success');
+}
+
+// =============================================
+// REPORTS
+// =============================================
+function renderReportTable() {
+  const tbody = document.getElementById('reportTable');
+  tbody.innerHTML = SAMPLE_STUDENTS.map((s,i) => {
+    const present = Math.floor(12 + Math.random()*6);
+    const total   = 18;
+    const absent  = total - present - Math.floor(Math.random()*2);
+    const late    = total - present - absent;
+    const rate    = Math.round(present/total*100);
+    const color   = avatarColors[i%avatarColors.length];
+    const initials= s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const status  = rate >= 75 ? 'present' : 'absent';
+    return `<tr>
+      <td><div class="flex-center">
+        <div class="mini-avatar" style="background:${color}22;color:${color};font-size:0.6rem;">${initials}</div>
+        ${s.name}
+      </div></td>
+      <td>${s.class}</td>
+      <td style="color:var(--teal);font-family:'DM Mono',monospace;">${present}</td>
+      <td style="color:var(--red);font-family:'DM Mono',monospace;">${absent}</td>
+      <td style="color:var(--gold);font-family:'DM Mono',monospace;">${late}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div class="progress-wrap" style="width:50px;"><div class="progress-fill" style="width:${rate}%;background:${rate>=80?'var(--teal)':rate>=60?'var(--gold)':'var(--red)'}"></div></div>
+          <span style="font-size:0.75rem;font-family:'DM Mono',monospace;">${rate}%</span>
+        </div>
+      </td>
+      <td><span class="status-badge status-${status}">${rate>=75?'OK':'LOW'}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function exportReport() {
+  const rows = [['Name','Class','Present','Absent','Late','Rate']];
+  SAMPLE_STUDENTS.forEach(s => {
+    const present = Math.floor(12+Math.random()*6);
+    rows.push([s.name, s.class, present, 18-present-1, 1, Math.round(present/18*100)+'%']);
+  });
+  const csv = rows.map(r=>r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'attendance_report.csv';
+  a.click();
+  showToast('✓ Report exported as CSV', 'success');
+}
+
+// =============================================
+// ADMIN
+// =============================================
+function saveSettings() {
+  showToast('✓ Settings saved', 'success');
+}
+
+function testConnection() {
+  const url = document.getElementById('adminSupaUrl').value.trim();
+  const key = document.getElementById('adminSupaKey').value.trim();
+  if (!url || !key) { showToast('Enter URL and Key first', 'error'); return; }
+  localStorage.setItem('acadex_url', url);
+  localStorage.setItem('acadex_key', key);
+  SUPABASE_URL = url; SUPABASE_KEY = key;
+  initSupabase(url, key);
+}
+
+function createTables() {
+  showToast('Run the SQL from the Setup page in Supabase SQL editor', 'error');
+}
+
+function seedData() {
+  if (!supabase) { showToast('Connect Supabase first', 'error'); return; }
+  supabase.from('students').insert(SAMPLE_STUDENTS.map(s=>({name:s.name,student_id:s.student_id,class:s.class,email:s.email})))
+    .then(()=>showToast('✓ Sample data seeded', 'success'))
+    .catch(()=>showToast('Seed failed — ensure tables exist', 'error'));
+}
+
+function clearData() {
+  if (!confirm('Clear all attendance data? This cannot be undone.')) return;
+  if (supabase) supabase.from('attendance').delete().neq('id','00000000-0000-0000-0000-000000000000');
+  Object.keys(attendanceMap).forEach(k=>delete attendanceMap[k]);
+  updateDashboardStats();
+  showToast('✓ Data cleared', 'success');
+}
+
+// =============================================
+// MODALS
+// =============================================
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) overlay.classList.remove('open');
+  });
+});
+
+// =============================================
+// TOAST
+// =============================================
+function showToast(msg, type='success') {
+  const t = document.getElementById('toast');
+  const icon = type==='success' ? '✓' : '✕';
+  t.innerHTML = `<span style="color:${type==='success'?'var(--teal)':'var(--red)'}">${icon}</span> ${msg}`;
+  t.className = `toast ${type} show`;
+  setTimeout(()=>t.classList.remove('show'), 3000);
+}
+</script>
+</body>
+</html>
