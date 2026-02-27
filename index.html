@@ -983,8 +983,8 @@ CREATE TABLE classes (
 // ─────────────────────────────────────────────
 // CONFIG
 // ─────────────────────────────────────────────
-let SUPABASE_URL = '';
-let SUPABASE_KEY = '';
+let SUPABASE_URL = 'https://zroqqgjiemmvbitrtnfs.supabase.co';
+let SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpyb3FxZ2ppZW1tdmJpdHJ0bmZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxMTM3MDMsImV4cCI6MjA4NzY4OTcwM30.7Vmrj9tKnkqCRvs0y4N_j8L3hWtEJkXnwVleb0kdghE';
 let supabase     = null;  // set by initSupabase()
 
 // ─────────────────────────────────────────────
@@ -1142,16 +1142,13 @@ window.onload = () => {
   renderClassesTable();
   updateDashboardStats();
 
-  // Restore saved credentials
-  const savedUrl = localStorage.getItem('acadex_url');
-  const savedKey = localStorage.getItem('acadex_key');
-  ['supaUrl','adminSupaUrl'].forEach(id => { const el=document.getElementById(id); if(el&&savedUrl) el.value=savedUrl; });
-  ['supaKey','adminSupaKey'].forEach(id => { const el=document.getElementById(id); if(el&&savedKey) el.value=savedKey; });
-  if (savedUrl && savedKey) {
-    SUPABASE_URL = savedUrl;
-    SUPABASE_KEY = savedKey;
-    initSupabase(savedUrl, savedKey);
-  }
+  // Use saved credentials if available, otherwise use hardcoded defaults
+  const savedUrl = localStorage.getItem('acadex_url') || SUPABASE_URL;
+  const savedKey = localStorage.getItem('acadex_key') || SUPABASE_KEY;
+  SUPABASE_URL = savedUrl; SUPABASE_KEY = savedKey;
+  ['supaUrl','adminSupaUrl'].forEach(id => { const el=document.getElementById(id); if(el) el.value=savedUrl; });
+  ['supaKey','adminSupaKey'].forEach(id => { const el=document.getElementById(id); if(el) el.value=savedKey; });
+  initSupabase(savedUrl, savedKey);
 
   loadFaceModels();
 };
