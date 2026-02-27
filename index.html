@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ACADEX — Attendance Management</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
 <style>
   :root {
     --ink: #0a0a0f;
@@ -851,6 +851,8 @@
   class TEXT NOT NULL,
   email TEXT,
   phone TEXT,
+  photo_url TEXT,
+  face_descriptor TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -859,8 +861,8 @@ CREATE TABLE attendance (
   student_id UUID REFERENCES students(id),
   date DATE NOT NULL DEFAULT CURRENT_DATE,
   status TEXT CHECK (status IN ('present','absent','late')),
-  class TEXT,
-  marked_at TIMESTAMPTZ DEFAULT now()
+  marked_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(student_id, date)
 );
 
 CREATE TABLE classes (
@@ -870,7 +872,12 @@ CREATE TABLE classes (
   teacher TEXT,
   schedule TEXT,
   room TEXT
-);</pre>
+);
+
+-- If tables already exist, add missing columns:
+-- ALTER TABLE students ADD COLUMN IF NOT EXISTS photo_url TEXT;
+-- ALTER TABLE students ADD COLUMN IF NOT EXISTS face_descriptor TEXT;
+-- ALTER TABLE attendance ADD CONSTRAINT attendance_student_date UNIQUE (student_id, date);</pre>
           </div>
         </div>
       </div>
@@ -1179,29 +1186,53 @@ function connectSupabase() {
 async function loadFromSupabase() {
   if (!supabase) return;
   try {
+    // 1. Load students
     const { data: students, error: sErr } = await supabase.from('students').select('*');
-    if (sErr) { console.error('Students load error:', sErr.message); showToast('DB error loading students: ' + sErr.message, 'error'); }
+    if (sErr) { console.error('Students load:', sErr.message); showToast('DB error: ' + sErr.message, 'error'); return; }
     if (students && students.length) {
-      studentIdMap = {};
-      students.forEach(s => { studentIdMap[s.student_id] = s.id; });
-      renderStudents(students);
-      updateDashboardStats(students.length);
+      // Replace SAMPLE_STUDENTS with DB data
+      SAMPLE_STUDENTS.length = 0;
+      students.forEach(s => {
+        SAMPLE_STUDENTS.push({ id: s.id, name: s.name, student_id: s.student_id, class: s.class, email: s.email || '', photo_url: s.photo_url || '' });
+        studentIdMap[s.student_id] = s.id;
+      });
+      renderStudents(SAMPLE_STUDENTS);
+      renderAttendanceList(document.getElementById('selectedClassName').textContent.replace('Class ','').trim() || 'X-A');
+      populateEnrollSelect();
+      updateDashboardStats(SAMPLE_STUDENTS.length);
     }
 
+    // 1b. Load face descriptors from DB and merge into localStorage
+    if (students && students.length) {
+      const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
+      let changed = false;
+      students.forEach(s => {
+        if (s.face_descriptor) {
+          try {
+            const descs = JSON.parse(s.face_descriptor);
+            if (!stored[s.student_id]) { stored[s.student_id] = descs; changed = true; }
+          } catch(e) {}
+        }
+        if (s.photo_url) {
+          const local = SAMPLE_STUDENTS.find(st => st.student_id === s.student_id);
+          if (local) local.photo_url = s.photo_url;
+        }
+      });
+      if (changed) localStorage.setItem(ENROLL_KEY, JSON.stringify(stored));
+      buildRecognizer();
+    }
+
+    // 2. Load today's attendance (flat query, no nested join)
     const today = new Date().toISOString().split('T')[0];
-    const { data: att, error: aErr } = await supabase
-      .from('attendance')
-      .select('*,students(name,class,student_id)')
-      .eq('date', today);
-    if (aErr) { console.error('Attendance load error:', aErr.message); }
+    const { data: att, error: aErr } = await supabase.from('attendance').select('*').eq('date', today);
+    if (aErr) { console.error('Attendance load:', aErr.message); return; }
     if (att && att.length) {
       att.forEach(r => { attendanceMap[r.student_id] = r.status; });
-      renderRecentAttendance(att.map(r => ({
-        student_id: r.student_id,
-        status: r.status,
-        _name:  r.students ? r.students.name  : null,
-        _class: r.students ? r.students.class : null
-      })));
+      // Resolve names locally now that SAMPLE_STUDENTS is populated
+      renderRecentAttendance(att.map(r => {
+        const s = SAMPLE_STUDENTS.find(st => st.id === r.student_id);
+        return { student_id: r.student_id, status: r.status, _name: s ? s.name : null, _class: s ? s.class : null };
+      }));
       updateDashboardStats();
     }
   } catch(e) { console.warn('loadFromSupabase error:', e); }
@@ -1215,7 +1246,7 @@ async function saveAttendanceToSupabase(records) {
       const realUUID = localStudent
         ? (studentIdMap[localStudent.student_id] || r.student_id)
         : r.student_id;
-      return { student_id: realUUID, date: r.date, status: r.status, class: r.class || '' };
+      return { student_id: realUUID, date: r.date, status: r.status };
     });
     const { error } = await supabase
       .from('attendance')
@@ -1235,8 +1266,9 @@ function showPage(name, el) {
   if (el) el.classList.add('active');
   const titles = {dashboard:'Dashboard',mark:'Mark Attendance',face:'Face Scan',students:'Students',classes:'Classes',reports:'Reports',admin:'Admin Panel',setup:'Supabase Setup'};
   document.getElementById('pageTitle').textContent = titles[name] || name;
+  // Stop camera when navigating away from face page
+  if (name !== 'face') stopCamera();
   if (name === 'face') { populateEnrollSelect(); updateEnrolledCount(); }
-  else stopCamera();
 }
 
 // =============================================
@@ -1305,16 +1337,24 @@ function renderStudents(students) {
   const grid = document.getElementById('studentsGrid');
   grid.innerHTML = students.map((s,i) => {
     const initials = s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-    const color = avatarColors[i % avatarColors.length];
-    const att = Math.floor(70 + Math.random()*28);
+    const color    = avatarColors[i % avatarColors.length];
+    // Use real attendance from attendanceMap
+    const realId   = studentIdMap[s.student_id] || s.id;
+    const todayStatus = attendanceMap[realId] || attendanceMap[s.id];
+    const attColor = todayStatus === 'present' ? 'var(--teal)' : todayStatus === 'absent' ? 'var(--red)' : todayStatus === 'late' ? 'var(--gold)' : 'var(--muted)';
+    const attLabel = todayStatus || 'Not marked';
+    // Show enrolled photo if available
+    const avatarHtml = s.photo_url
+      ? `<img src="${s.photo_url}" style="width:46px;height:46px;border-radius:50%;object-fit:cover;margin-bottom:10px;border:2px solid var(--teal);">`
+      : `<div class="student-avatar" style="background:${color}22;color:${color};">${initials}</div>`;
     return `
     <div class="student-card">
-      <div class="student-avatar" style="background:${color}22;color:${color};">${initials}</div>
+      ${avatarHtml}
       <div class="student-name">${s.name}</div>
       <div class="student-id">${s.student_id}</div>
       <div class="student-stats">
         <div class="student-stat">Class: <span>${s.class}</span></div>
-        <div class="student-stat">Att: <span style="color:${att>=80?'var(--teal)':att>=60?'var(--gold)':'var(--red)'}">${att}%</span></div>
+        <div class="student-stat">Today: <span style="color:${attColor}">${attLabel}</span></div>
       </div>
     </div>`;
   }).join('');
@@ -1334,9 +1374,11 @@ async function addStudent() {
   const cls   = document.getElementById('newStudentClass').value;
   const email = document.getElementById('newStudentEmail').value.trim();
   if (!name || !sid) { showToast('Name and ID are required', 'error'); return; }
-  const student = { id:'s'+Date.now(), name, student_id:sid, class:cls, email };
+
+  const student = { id: 's' + Date.now(), name, student_id: sid, class: cls, email, photo_url: '' };
   SAMPLE_STUDENTS.push(student);
   renderStudents(SAMPLE_STUDENTS);
+  populateEnrollSelect();
   closeModal('addStudentModal');
 
   if (supabase) {
@@ -1347,11 +1389,12 @@ async function addStudent() {
     if (error) {
       showToast('DB error: ' + error.message, 'error');
     } else if (data && data[0]) {
-      studentIdMap[sid] = data[0].id; // cache the real UUID
-      showToast('Student saved to database: ' + name, 'success');
+      student.id = data[0].id;  // update local object with real UUID
+      studentIdMap[sid] = data[0].id;
+      showToast('Student saved — now go to Face Scan to enroll their face', 'success');
     }
   } else {
-    showToast('Student added locally: ' + name, 'success');
+    showToast('Student added — go to Face Scan to enroll their face', 'success');
   }
   updateDashboardStats();
 }
@@ -1470,7 +1513,7 @@ async function quickMarkAttendance() {
     const today  = new Date().toISOString().split('T')[0];
     const { error } = await supabase
       .from('attendance')
-      .upsert([{ student_id: realId, date: today, status, class: cls }], { onConflict: 'student_id,date' });
+      .upsert([{ student_id: realId, date: today, status }], { onConflict: 'student_id,date' });
     showToast(error ? 'DB error: ' + error.message : `${student.name} marked ${status}`, error ? 'error' : 'success');
   } else {
     showToast(`${student.name} marked as ${status}`, 'success');
@@ -1489,24 +1532,58 @@ let scannedToday      = new Set(); // student IDs already marked this session
 // Storage key for enrolled descriptors
 const ENROLL_KEY = 'acadex_face_descriptors';
 
-// --- Load Models on page ready ---
-async function loadFaceModels() {
+// --- Load face-api.js SDK then models dynamically ---
+function loadFaceModels() {
   const badge = document.getElementById('faceModelStatus');
-  if (badge) { badge.textContent = 'LOADING MODELS…'; badge.style.background='rgba(240,192,96,0.1)'; badge.style.color='var(--gold)'; }
-  try {
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODELS_URL),
-      faceapi.nets.faceLandmark68TinyNet.loadFromUri(FACE_MODELS_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODELS_URL),
-    ]);
-    faceModelsLoaded = true;
-    if (badge) { badge.textContent = 'AI READY'; badge.style.background='rgba(56,217,192,0.1)'; badge.style.color='var(--teal)'; }
-    buildRecognizer();
-    populateEnrollSelect();
-    updateEnrolledCount();
-  } catch(e) {
-    console.error('Model load error:', e);
-    if (badge) { badge.textContent = 'MODEL ERROR'; badge.style.background='rgba(255,95,109,0.1)'; badge.style.color='var(--red)'; }
+  function setBadge(text, color, bg) {
+    if (!badge) return;
+    badge.textContent = text;
+    badge.style.color = color;
+    badge.style.background = bg;
+  }
+  setBadge('LOADING MODELS…', 'var(--gold)', 'rgba(240,192,96,0.1)');
+
+  // If face-api already loaded, go straight to loading models
+  if (window.faceapi) { doLoadModels(); return; }
+
+  // Dynamically inject face-api.js
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js';
+  script.onload = () => {
+    if (!window.faceapi) {
+      setBadge('MODEL ERROR', 'var(--red)', 'rgba(255,95,109,0.1)');
+      console.error('face-api.js loaded but faceapi global missing');
+      return;
+    }
+    doLoadModels();
+  };
+  script.onerror = () => {
+    setBadge('MODEL ERROR', 'var(--red)', 'rgba(255,95,109,0.1)');
+    console.error('Failed to load face-api.js from CDN — check network/HTTPS');
+    showToast('Face AI failed to load — check network', 'error');
+  };
+  document.head.appendChild(script);
+
+  async function doLoadModels() {
+    try {
+      setBadge('LOADING MODELS…', 'var(--gold)', 'rgba(240,192,96,0.1)');
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODELS_URL),
+        faceapi.nets.faceLandmark68TinyNet.loadFromUri(FACE_MODELS_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODELS_URL),
+      ]);
+      faceModelsLoaded = true;
+      setBadge('AI READY', 'var(--teal)', 'rgba(56,217,192,0.1)');
+      buildRecognizer();
+      populateEnrollSelect();
+      updateEnrolledCount();
+      // If camera is already running, start the scan loop now
+      if (cameraStream) startScanLoop();
+    } catch(e) {
+      console.error('Model load error:', e);
+      setBadge('MODEL ERROR', 'var(--red)', 'rgba(255,95,109,0.1)');
+      showToast('Face model error — check console', 'error');
+    }
   }
 }
 
@@ -1712,7 +1789,12 @@ async function runFaceScan() {
 async function markFaceAttendance(student) {
   const status = 'present';
   const time   = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  // Use the real DB UUID if available, fallback to local id
+  const realId = studentIdMap[student.student_id] || student.id;
+  // Store in attendanceMap under BOTH keys so lookups always work
   attendanceMap[student.id] = status;
+  attendanceMap[realId]     = status;
+
   scanCount++;
   document.getElementById('scanCount').textContent = scanCount + ' SCANNED';
   document.getElementById('scanStatus').textContent = '✓ Marked: ' + student.name;
@@ -1722,12 +1804,18 @@ async function markFaceAttendance(student) {
   const log   = document.getElementById('scanLog');
   const empty = log.querySelector('[style*="text-align:center"]');
   if (empty) empty.remove();
-  const color    = avatarColors[SAMPLE_STUDENTS.indexOf(student) % avatarColors.length];
+  const idx    = SAMPLE_STUDENTS.findIndex(s => s.student_id === student.student_id);
+  const color  = avatarColors[(idx >= 0 ? idx : 0) % avatarColors.length];
   const initials = student.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-  const entry    = document.createElement('div');
+  // Show enrolled photo if available
+  const photoHtml = student.photo_url
+    ? `<img src="${student.photo_url}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;">`
+    : `<div class="mini-avatar" style="background:${color}22;color:${color};">${initials}</div>`;
+
+  const entry = document.createElement('div');
   entry.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px;background:var(--ink3);border-radius:10px;animation:fadeIn 0.3s ease;';
   entry.innerHTML = `
-    <div class="mini-avatar" style="background:${color}22;color:${color};">${initials}</div>
+    ${photoHtml}
     <div style="flex:1;">
       <div style="font-size:0.8rem;font-weight:600;">${student.name}</div>
       <div style="font-size:0.65rem;color:var(--muted);">${student.student_id} · ${student.class}</div>
@@ -1740,33 +1828,38 @@ async function markFaceAttendance(student) {
   updateDashboardStats();
   showToast('✓ ' + student.name + ' marked present', 'success');
 
-  // Push to Supabase
+  // ── Push to Supabase ──
   if (supabase) {
-    const realId = studentIdMap[student.student_id] || student.id;
-    const today  = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split('T')[0];
     const { error } = await supabase
       .from('attendance')
-      .upsert([{ student_id: realId, date: today, status, class: student.class }], { onConflict: 'student_id,date' });
-    if (error) console.error('Face attendance DB error:', error.message);
+      .upsert([{ student_id: realId, date: today, status }], { onConflict: 'student_id,date' });
+    if (error) {
+      console.error('Face attendance DB error:', error.message);
+      showToast('DB error: ' + error.message, 'error');
+    }
   }
 }
 
-// --- Enrollment ---
+// --- Enrollment: capture face descriptor + photo, save both locally and to DB ---
 async function enrollFace() {
   const sel = document.getElementById('enrollStudentSelect');
   const sid = sel ? sel.value : '';
   if (!sid) { showToast('Select a student first', 'error'); return; }
-  if (!faceModelsLoaded) { showToast('AI models still loading…', 'error'); return; }
+  if (!faceModelsLoaded) { showToast('AI models still loading — wait a moment', 'error'); return; }
 
   const video = document.getElementById('cameraFeed');
   if (!cameraStream || video.style.display === 'none') {
-    showToast('Start the camera first, then click Capture', 'error'); return;
+    showToast('Start the camera first, look at it, then click Capture', 'error'); return;
   }
 
   const student = SAMPLE_STUDENTS.find(s => s.student_id === sid);
   if (!student) { showToast('Student not found', 'error'); return; }
 
-  document.getElementById('scanStatus').textContent = 'Capturing face for ' + student.name + '…';
+  const statusEl = document.getElementById('scanStatus');
+  statusEl.textContent = 'Detecting face for ' + student.name + '…';
+  statusEl.className = '';
+
   const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.4 });
   const detection = await faceapi
     .detectSingleFace(video, opts)
@@ -1774,34 +1867,62 @@ async function enrollFace() {
     .withFaceDescriptor();
 
   if (!detection) {
-    document.getElementById('scanStatus').textContent = 'No face detected — make sure your face is visible and well-lit';
-    document.getElementById('scanStatus').className = 'fail';
+    statusEl.textContent = 'No face detected — ensure good lighting and face is visible';
+    statusEl.className = 'fail';
     showToast('No face detected — try again', 'error'); return;
   }
 
-  // Save descriptor to localStorage
+  // ── Capture photo as base64 JPEG ──
+  const photoCanvas = document.createElement('canvas');
+  photoCanvas.width  = video.videoWidth  || 320;
+  photoCanvas.height = video.videoHeight || 240;
+  photoCanvas.getContext('2d').drawImage(video, 0, 0, photoCanvas.width, photoCanvas.height);
+  const photoBase64 = photoCanvas.toDataURL('image/jpeg', 0.7); // base64 data URL
+
+  // ── Save descriptor to localStorage ──
   const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
   if (!stored[sid]) stored[sid] = [];
   stored[sid].push(Array.from(detection.descriptor));
-  // Keep max 3 samples per student for accuracy
-  if (stored[sid].length > 3) stored[sid] = stored[sid].slice(-3);
+  if (stored[sid].length > 5) stored[sid] = stored[sid].slice(-5); // keep last 5 samples
   localStorage.setItem(ENROLL_KEY, JSON.stringify(stored));
+
+  // ── Save photo URL to SAMPLE_STUDENTS local cache ──
+  student.photo_url = photoBase64;
+
+  // ── Update student card to show enrolled photo ──
+  renderStudents(SAMPLE_STUDENTS);
 
   buildRecognizer();
   populateEnrollSelect();
   updateEnrolledCount();
 
-  document.getElementById('scanStatus').textContent = '✓ Face enrolled for ' + student.name;
-  document.getElementById('scanStatus').className = 'success';
-  showToast('✓ Face enrolled: ' + student.name, 'success');
-
-  // Reset scannedToday so they can be re-recognized immediately
+  statusEl.textContent = '✓ Face enrolled for ' + student.name;
+  statusEl.className = 'success';
+  showToast('Face enrolled: ' + student.name, 'success');
   scannedToday.delete(sid);
+
+  // ── Push photo URL to Supabase students table ──
+  if (supabase) {
+    const realId = studentIdMap[sid] || student.id;
+    // Store the face descriptor JSON + photo URL in the students row
+    const descriptorJson = JSON.stringify(stored[sid]);
+    const { error } = await supabase
+      .from('students')
+      .update({ photo_url: photoBase64, face_descriptor: descriptorJson })
+      .eq('id', realId);
+    if (error) {
+      console.warn('Could not save face to DB (ensure photo_url and face_descriptor columns exist):', error.message);
+      showToast('Enrolled locally (add photo_url & face_descriptor columns to save to DB)', 'success');
+    } else {
+      showToast('Face & photo saved to database: ' + student.name, 'success');
+    }
+  }
 }
 
 function clearEnrollments() {
   if (!confirm('Clear all enrolled faces? Students will need to re-enroll.')) return;
   localStorage.removeItem(ENROLL_KEY);
+  SAMPLE_STUDENTS.forEach(s => { s.photo_url = ''; });
   buildRecognizer();
   populateEnrollSelect();
   updateEnrolledCount();
@@ -1837,7 +1958,7 @@ function renderClassesTable() {
     </tr>`).join('');
 }
 
-function addClass() {
+async function addClass() {
   const name     = document.getElementById('newClassName').value.trim();
   const subject  = document.getElementById('newClassSubject').value.trim();
   const teacher  = document.getElementById('newClassTeacher').value.trim();
@@ -1846,7 +1967,12 @@ function addClass() {
   SAMPLE_CLASSES.push({ name, subject, teacher, students:0, avg:0, schedule });
   renderClassesTable();
   closeModal('addClassModal');
-  showToast('✓ Class added: ' + name, 'success');
+  if (supabase) {
+    const { error } = await supabase.from('classes').insert([{ name, subject, teacher, schedule }]);
+    showToast(error ? 'DB error: ' + error.message : 'Class saved: ' + name, error ? 'error' : 'success');
+  } else {
+    showToast('Class added: ' + name, 'success');
+  }
 }
 
 // =============================================
@@ -1855,14 +1981,17 @@ function addClass() {
 function renderReportTable() {
   const tbody = document.getElementById('reportTable');
   tbody.innerHTML = SAMPLE_STUDENTS.map((s,i) => {
-    const present = Math.floor(12 + Math.random()*6);
-    const total   = 18;
-    const absent  = total - present - Math.floor(Math.random()*2);
-    const late    = total - present - absent;
-    const rate    = Math.round(present/total*100);
+    // Use real attendance data from attendanceMap/DB if available
+    const todayStatus = attendanceMap[s.id] || attendanceMap[studentIdMap[s.student_id]];
+    const present = todayStatus === 'present' ? 1 : 0;
+    const absent  = todayStatus === 'absent'  ? 1 : 0;
+    const late    = todayStatus === 'late'    ? 1 : 0;
+    const total   = present + absent + late || 1;
+    const rate    = Math.round(present / total * 100);
     const color   = avatarColors[i%avatarColors.length];
     const initials= s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-    const status  = rate >= 75 ? 'present' : 'absent';
+    const statusLabel = todayStatus || '—';
+    const badgeClass  = todayStatus === 'present' ? 'present' : todayStatus === 'absent' ? 'absent' : todayStatus === 'late' ? 'late' : 'absent';
     return `<tr>
       <td><div class="flex-center">
         <div class="mini-avatar" style="background:${color}22;color:${color};font-size:0.6rem;">${initials}</div>
@@ -1875,10 +2004,10 @@ function renderReportTable() {
       <td>
         <div style="display:flex;align-items:center;gap:8px;">
           <div class="progress-wrap" style="width:50px;"><div class="progress-fill" style="width:${rate}%;background:${rate>=80?'var(--teal)':rate>=60?'var(--gold)':'var(--red)'}"></div></div>
-          <span style="font-size:0.75rem;font-family:'DM Mono',monospace;">${rate}%</span>
+          <span style="font-size:0.75rem;font-family:'DM Mono',monospace;">${todayStatus ? rate+'%' : '—'}</span>
         </div>
       </td>
-      <td><span class="status-badge status-${status}">${rate>=75?'OK':'LOW'}</span></td>
+      <td><span class="status-badge status-${badgeClass}">${statusLabel}</span></td>
     </tr>`;
   }).join('');
 }
