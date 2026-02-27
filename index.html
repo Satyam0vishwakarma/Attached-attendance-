@@ -980,40 +980,157 @@ CREATE TABLE classes (
 <div class="toast" id="toast"></div>
 
 <script>
-// =============================================
-// CONFIG — Update with your Supabase credentials
-// =============================================
-let SUPABASE_URL = 'https://zroqqgjiemmvbitrtnfs.supabase.co';
-let SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpyb3FxZ2ppZW1tdmJpdHJ0bmZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIxMTM3MDMsImV4cCI6MjA4NzY4OTcwM30.7Vmrj9tKnkqCRvs0y4N_j8L3hWtEJkXnwVleb0kdghE';
-let supabase = null;
+// ─────────────────────────────────────────────
+// CONFIG
+// ─────────────────────────────────────────────
+let SUPABASE_URL = '';
+let SUPABASE_KEY = '';
+let supabase     = null;  // set by initSupabase()
 
-// =============================================
-// SAMPLE DATA (used when Supabase not connected)
-// =============================================
-const SAMPLE_STUDENTS = [
-  { id:'s1', name:'Arjun Sharma',    student_id:'STU-001', class:'X-A',  email:'arjun@school.com' },
-  { id:'s2', name:'Priya Mehta',     student_id:'STU-002', class:'X-A',  email:'priya@school.com' },
-  { id:'s3', name:'Rahul Verma',     student_id:'STU-003', class:'X-A',  email:'rahul@school.com' },
-  { id:'s4', name:'Sneha Patel',     student_id:'STU-004', class:'XI-B', email:'sneha@school.com' },
-  { id:'s5', name:'Vikram Singh',    student_id:'STU-005', class:'XI-B', email:'vikram@school.com' },
-  { id:'s6', name:'Anjali Gupta',    student_id:'STU-006', class:'XII-C',email:'anjali@school.com' },
-  { id:'s7', name:'Rohan Kumar',     student_id:'STU-007', class:'X-B',  email:'rohan@school.com' },
-  { id:'s8', name:'Neha Joshi',      student_id:'STU-008', class:'X-B',  email:'neha@school.com' },
-  { id:'s9', name:'Karan Malhotra',  student_id:'STU-009', class:'XI-A', email:'karan@school.com' },
-  { id:'s10',name:'Divya Nair',      student_id:'STU-010', class:'XI-A', email:'divya@school.com' },
-  { id:'s11',name:'Amit Bose',       student_id:'STU-011', class:'XII-C',email:'amit@school.com' },
-  { id:'s12',name:'Ritika Sharma',   student_id:'STU-012', class:'X-A',  email:'ritika@school.com' },
+// ─────────────────────────────────────────────
+// SUPABASE REST CLIENT
+// Thin wrapper over fetch() — no SDK needed.
+// ─────────────────────────────────────────────
+function createSupabaseClient(url, key) {
+  const BASE = {
+    'apikey':        key,
+    'Authorization': 'Bearer ' + key,
+    'Content-Type':  'application/json',
+  };
+
+  // Execute a raw REST call and return { data, error }
+  async function call(method, table, body, qs, prefer) {
+    let endpoint = url + '/rest/v1/' + table;
+    if (qs) endpoint += '?' + qs;
+    const headers = Object.assign({}, BASE);
+    if (prefer) headers['Prefer'] = prefer;
+    try {
+      const res  = await fetch(endpoint, { method, headers, body: body ? JSON.stringify(body) : undefined });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch(_) { data = text; }
+      if (!res.ok) {
+        const msg = (data && data.message) || (data && data.error) || (data && data.hint) || res.statusText;
+        console.error('Supabase', method, table, res.status, data);
+        return { data: null, error: { message: msg, status: res.status, raw: data } };
+      }
+      return { data: Array.isArray(data) ? data : (data ? [data] : []), error: null };
+    } catch(e) {
+      return { data: null, error: { message: e.message } };
+    }
+  }
+
+  return {
+    // SELECT  — db.from('t').select('*').eq('col','val')
+    from(table) {
+      const filters = [];
+      const api = {
+        _select: '*',
+        select(cols)      { api._select = cols || '*'; return api; },
+        eq(col, val)      { filters.push(col + '=eq.'  + encodeURIComponent(val)); return api; },
+        neq(col, val)     { filters.push(col + '=neq.' + encodeURIComponent(val)); return api; },
+        gt(col, val)      { filters.push(col + '=gt.'  + encodeURIComponent(val)); return api; },
+        gte(col, val)     { filters.push(col + '=gte.' + encodeURIComponent(val)); return api; },
+        lt(col, val)      { filters.push(col + '=lt.'  + encodeURIComponent(val)); return api; },
+        order(col, opts)  { filters.push('order=' + col + (opts&&opts.ascending===false?'.desc':'')); return api; },
+
+        // Reads
+        then(resolve) {
+          const qs = ['select=' + encodeURIComponent(api._select), ...filters].join('&');
+          resolve(call('GET', table, null, qs, ''));
+        },
+
+        // INSERT — returns inserted rows
+        async insert(rows) {
+          return call('POST', table,
+            Array.isArray(rows) ? rows : [rows],
+            'select=' + encodeURIComponent(api._select),
+            'return=representation');
+        },
+
+        // UPSERT — merge on conflict column(s)
+        async upsert(rows, opts) {
+          const onConflict = opts && opts.onConflict ? opts.onConflict : '';
+          // on_conflict must be a plain (non-encoded) query param
+          const qs = onConflict ? 'on_conflict=' + onConflict : '';
+          return call('POST', table,
+            Array.isArray(rows) ? rows : [rows],
+            qs,
+            'return=representation,resolution=merge-duplicates');
+        },
+
+        // UPDATE — requires at least one .eq() filter
+        async update(data) {
+          const qs = filters.join('&');
+          return call('PATCH', table, data, qs, 'return=representation');
+        },
+
+        // DELETE — requires at least one .eq() filter
+        async delete() {
+          const qs = filters.join('&');
+          return call('DELETE', table, null, qs, 'return=representation');
+        },
+      };
+      return api;
+    }
+  };
+}
+
+// ─────────────────────────────────────────────
+// LOCAL DATA — used before/without DB
+// ─────────────────────────────────────────────
+let SAMPLE_STUDENTS = [
+  { id:'s1',  name:'Arjun Sharma',   student_id:'STU-001', class:'X-A',   email:'arjun@school.com',  photo_url:'' },
+  { id:'s2',  name:'Priya Mehta',    student_id:'STU-002', class:'X-A',   email:'priya@school.com',  photo_url:'' },
+  { id:'s3',  name:'Rahul Verma',    student_id:'STU-003', class:'X-A',   email:'rahul@school.com',  photo_url:'' },
+  { id:'s4',  name:'Sneha Patel',    student_id:'STU-004', class:'XI-B',  email:'sneha@school.com',  photo_url:'' },
+  { id:'s5',  name:'Vikram Singh',   student_id:'STU-005', class:'XI-B',  email:'vikram@school.com', photo_url:'' },
+  { id:'s6',  name:'Anjali Gupta',   student_id:'STU-006', class:'XII-C', email:'anjali@school.com', photo_url:'' },
+  { id:'s7',  name:'Rohan Kumar',    student_id:'STU-007', class:'X-B',   email:'rohan@school.com',  photo_url:'' },
+  { id:'s8',  name:'Neha Joshi',     student_id:'STU-008', class:'X-B',   email:'neha@school.com',   photo_url:'' },
+  { id:'s9',  name:'Karan Malhotra', student_id:'STU-009', class:'XI-A',  email:'karan@school.com',  photo_url:'' },
+  { id:'s10', name:'Divya Nair',     student_id:'STU-010', class:'XI-A',  email:'divya@school.com',  photo_url:'' },
+  { id:'s11', name:'Amit Bose',      student_id:'STU-011', class:'XII-C', email:'amit@school.com',   photo_url:'' },
+  { id:'s12', name:'Ritika Sharma',  student_id:'STU-012', class:'X-A',   email:'ritika@school.com', photo_url:'' },
 ];
 
-const SAMPLE_ATTENDANCE = [];
-const avatarColors = ['#f0c060','#38d9c0','#ff5f6d','#a78bfa','#60a5fa','#34d399'];
-let attendanceMap = {}; // studentId -> status
-let cameraStream = null;
-let scanCount = 0;
+// studentIdMap: student_id TEXT (e.g. "STU-001") → DB UUID
+// This is the ONLY source of truth for DB UUIDs.
+// Populated by loadFromSupabase() and addStudent().
+let studentIdMap = {};
 
-// =============================================
+const avatarColors  = ['#f0c060','#38d9c0','#ff5f6d','#a78bfa','#60a5fa','#34d399'];
+let   attendanceMap = {};  // DB UUID → status  (always keyed by real UUID when available)
+let   cameraStream  = null;
+let   scanCount     = 0;
+
+// ── UUID helpers ──────────────────────────────
+// Get the DB UUID for a student. Returns null if student not in DB yet.
+function getUUID(student) {
+  // studentIdMap populated from DB: student_id TEXT → real UUID
+  if (studentIdMap[student.student_id]) return studentIdMap[student.student_id];
+  // If student.id already IS a UUID (has hyphens), use it directly
+  if (student.id && student.id.includes('-')) return student.id;
+  return null;  // local-only student
+}
+
+// Get attendance status for a student, checking both UUID and local id
+function getStatus(student) {
+  const uuid = getUUID(student);
+  if (uuid && attendanceMap[uuid] !== undefined) return attendanceMap[uuid];
+  return attendanceMap[student.id] || null;
+}
+
+// Set attendance status locally for a student
+function setStatus_local(student, status) {
+  const uuid = getUUID(student);
+  if (uuid) attendanceMap[uuid] = status;
+  else       attendanceMap[student.id] = status;
+}
+
+// ─────────────────────────────────────────────
 // INIT
-// =============================================
+// ─────────────────────────────────────────────
 window.onload = () => {
   updateDate();
   renderWeeklyChart();
@@ -1025,347 +1142,239 @@ window.onload = () => {
   renderClassesTable();
   updateDashboardStats();
 
-  const savedUrl = localStorage.getItem('acadex_url') || SUPABASE_URL;
-  const savedKey = localStorage.getItem('acadex_key') || SUPABASE_KEY;
+  // Restore saved credentials
+  const savedUrl = localStorage.getItem('acadex_url');
+  const savedKey = localStorage.getItem('acadex_key');
+  ['supaUrl','adminSupaUrl'].forEach(id => { const el=document.getElementById(id); if(el&&savedUrl) el.value=savedUrl; });
+  ['supaKey','adminSupaKey'].forEach(id => { const el=document.getElementById(id); if(el&&savedKey) el.value=savedKey; });
   if (savedUrl && savedKey) {
-    SUPABASE_URL = savedUrl; SUPABASE_KEY = savedKey;
-    const fields = ['supaUrl','adminSupaUrl'];
-    const keyFields = ['supaKey','adminSupaKey'];
-    fields.forEach(id => { const el=document.getElementById(id); if(el) el.value = savedUrl; });
-    keyFields.forEach(id => { const el=document.getElementById(id); if(el) el.value = savedKey; });
+    SUPABASE_URL = savedUrl;
+    SUPABASE_KEY = savedKey;
     initSupabase(savedUrl, savedKey);
   }
 
-  // Load face recognition models in background
   loadFaceModels();
 };
 
 function updateDate() {
-  const now = new Date();
+  const now  = new Date();
   const opts = { weekday:'short', month:'short', day:'numeric', year:'numeric' };
   document.getElementById('todayBadge').textContent = now.toLocaleDateString('en-IN', opts).toUpperCase();
 }
 
-
-// =============================================
-// INLINE SUPABASE CLIENT (no external SDK needed)
-// =============================================
-window.supabase = {
-  createClient(url, key) {
-    const headers = {
-      'apikey': key,
-      'Authorization': 'Bearer ' + key,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=representation'
-    };
-
-    function builder(table) {
-      let _url    = url + '/rest/v1/' + table;
-      let _method = 'GET';
-      let _body   = null;
-      let _filters = [];
-      let _select  = '*';
-      let _prefer  = 'return=representation';
-
-      const q = {
-        select(cols) { _select = cols || '*'; return q; },
-
-        eq(col, val) { _filters.push(col + '=eq.' + encodeURIComponent(val)); return q; },
-        neq(col, val){ _filters.push(col + '=neq.' + encodeURIComponent(val)); return q; },
-        gt(col, val) { _filters.push(col + '=gt.' + encodeURIComponent(val)); return q; },
-        lt(col, val) { _filters.push(col + '=lt.' + encodeURIComponent(val)); return q; },
-
-        insert(rows) {
-          _method = 'POST';
-          _body   = JSON.stringify(Array.isArray(rows) ? rows : [rows]);
-          return q;
-        },
-
-        upsert(rows, opts) {
-          _method  = 'POST';
-          _body    = JSON.stringify(Array.isArray(rows) ? rows : [rows]);
-          const col = (opts && opts.onConflict) ? opts.onConflict : '';
-          _prefer  = 'resolution=merge-duplicates' + (col ? ',return=representation' : '');
-          return q;
-        },
-
-        update(data) {
-          _method = 'PATCH';
-          _body   = JSON.stringify(data);
-          return q;
-        },
-
-        delete() {
-          _method = 'DELETE';
-          return q;
-        },
-
-        then(resolve, reject) {
-          // Build final URL
-          let finalUrl = _url + '?select=' + encodeURIComponent(_select);
-          if (_filters.length) finalUrl += '&' + _filters.join('&');
-
-          const h = Object.assign({}, headers, { 'Prefer': _prefer });
-
-          fetch(finalUrl, { method: _method, headers: h, body: _body })
-            .then(async res => {
-              let data = null;
-              const text = await res.text();
-              try { data = text ? JSON.parse(text) : null; } catch(e) { data = text; }
-
-              if (!res.ok) {
-                const msg = (data && data.message) ? data.message :
-                            (data && data.error)   ? data.error   : res.statusText;
-                resolve({ data: null, error: { message: msg, status: res.status, details: data } });
-              } else {
-                resolve({ data: Array.isArray(data) ? data : (data ? [data] : []), error: null });
-              }
-            })
-            .catch(err => resolve({ data: null, error: { message: err.message } }));
-        },
-
-        // Allow await on the builder directly
-        get [Symbol.toStringTag]() { return 'SupabaseQuery'; }
-      };
-
-      // Make q thenable (so await works)
-      q[Symbol.iterator] = undefined;
-      return q;
-    }
-
-    return {
-      from(table) { return builder(table); }
-    };
-  }
-};
-
-// =============================================
-// SUPABASE INIT
-// =============================================
-let studentIdMap = {};
-
+// ─────────────────────────────────────────────
+// SUPABASE CONNECTION
+// ─────────────────────────────────────────────
 function setDbStatus(connected) {
   const el = document.getElementById('dbStatus');
   if (!el) return;
-  if (connected) {
-    el.textContent = 'CONNECTED';
-    el.style.background = 'rgba(56,217,192,0.1)';
-    el.style.color = 'var(--teal)';
-  } else {
-    el.textContent = 'DISCONNECTED';
-    el.style.background = 'rgba(255,95,109,0.1)';
-    el.style.color = 'var(--red)';
-  }
+  el.textContent  = connected ? 'CONNECTED' : 'DISCONNECTED';
+  el.style.color  = connected ? 'var(--teal)' : 'var(--red)';
+  el.style.background = connected ? 'rgba(56,217,192,0.1)' : 'rgba(255,95,109,0.1)';
 }
 
-function initSupabase(url, key) {
+async function initSupabase(url, key) {
   if (!url || !key) { showToast('Enter Supabase URL and Key', 'error'); return; }
-  try {
-    supabase = window.supabase.createClient(url, key);
-    setDbStatus(true);
-    showToast('Connected to Supabase', 'success');
-    loadFromSupabase();
-  } catch(e) {
+  supabase = createSupabaseClient(url, key);
+
+  // Ping to verify credentials work
+  const { error } = await supabase.from('students').select('id');
+  
+  if (error) {
     setDbStatus(false);
-    console.error('Supabase init error:', e);
-    showToast('Connection failed: ' + e.message, 'error');
+    supabase = null;
+    showToast('DB error: ' + error.message, 'error');
+    console.error('Supabase ping failed:', error);
+    return;
   }
+  setDbStatus(true);
+  showToast('Connected to Supabase ✓', 'success');
+  await loadFromSupabase();
 }
 
 function connectSupabase() {
   const url = document.getElementById('supaUrl').value.trim();
   const key = document.getElementById('supaKey').value.trim();
-  if (!url || !key) { showToast('Please enter both URL and Key', 'error'); return; }
+  if (!url || !key) { showToast('Enter both URL and Key', 'error'); return; }
   localStorage.setItem('acadex_url', url);
   localStorage.setItem('acadex_key', key);
   SUPABASE_URL = url; SUPABASE_KEY = key;
-  supabase = null;
+  ['supaUrl','adminSupaUrl'].forEach(id => { const el=document.getElementById(id); if(el) el.value=url; });
+  ['supaKey','adminSupaKey'].forEach(id => { const el=document.getElementById(id); if(el) el.value=key; });
   initSupabase(url, key);
 }
 
+// ─────────────────────────────────────────────
+// LOAD FROM DB
+// Steps:
+//  1. Load students → populate SAMPLE_STUDENTS + studentIdMap
+//  2. Load face descriptors → merge into localStorage
+//  3. Load today's attendance → populate attendanceMap (keyed by UUID)
+// ─────────────────────────────────────────────
 async function loadFromSupabase() {
   if (!supabase) return;
-  try {
-    // 1. Load students
-    const { data: students, error: sErr } = await supabase.from('students').select('*');
-    if (sErr) { console.error('Students load:', sErr.message); showToast('DB error: ' + sErr.message, 'error'); return; }
-    if (students && students.length) {
-      // Replace SAMPLE_STUDENTS with DB data
-      SAMPLE_STUDENTS.length = 0;
-      students.forEach(s => {
-        SAMPLE_STUDENTS.push({ id: s.id, name: s.name, student_id: s.student_id, class: s.class, email: s.email || '', photo_url: s.photo_url || '' });
-        studentIdMap[s.student_id] = s.id;
+
+  // 1. Students
+  const { data: students, error: sErr } = await supabase.from('students').select('*');
+  if (sErr) { showToast('Load students error: ' + sErr.message, 'error'); return; }
+
+  if (students && students.length > 0) {
+    // Replace local list with DB data; student.id IS the DB UUID
+    SAMPLE_STUDENTS.length = 0;
+    studentIdMap = {};
+    students.forEach(s => {
+      SAMPLE_STUDENTS.push({
+        id:         s.id,           // real DB UUID
+        name:       s.name,
+        student_id: s.student_id,  // text like STU-001
+        class:      s.class,
+        email:      s.email || '',
+        photo_url:  s.photo_url || '',
       });
-      renderStudents(SAMPLE_STUDENTS);
-      renderAttendanceList(document.getElementById('selectedClassName').textContent.replace('Class ','').trim() || 'X-A');
-      populateEnrollSelect();
-      updateDashboardStats(SAMPLE_STUDENTS.length);
-    }
-
-    // 1b. Load face descriptors from DB and merge into localStorage
-    if (students && students.length) {
-      const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
-      let changed = false;
-      students.forEach(s => {
-        if (s.face_descriptor) {
-          try {
-            const descs = JSON.parse(s.face_descriptor);
-            if (!stored[s.student_id]) { stored[s.student_id] = descs; changed = true; }
-          } catch(e) {}
-        }
-        if (s.photo_url) {
-          const local = SAMPLE_STUDENTS.find(st => st.student_id === s.student_id);
-          if (local) local.photo_url = s.photo_url;
-        }
-      });
-      if (changed) localStorage.setItem(ENROLL_KEY, JSON.stringify(stored));
-      buildRecognizer();
-    }
-
-    // 2. Load today's attendance (flat query, no nested join)
-    const today = new Date().toISOString().split('T')[0];
-    const { data: att, error: aErr } = await supabase.from('attendance').select('*').eq('date', today);
-    if (aErr) { console.error('Attendance load:', aErr.message); return; }
-    if (att && att.length) {
-      att.forEach(r => { attendanceMap[r.student_id] = r.status; });
-      // Resolve names locally now that SAMPLE_STUDENTS is populated
-      renderRecentAttendance(att.map(r => {
-        const s = SAMPLE_STUDENTS.find(st => st.id === r.student_id);
-        return { student_id: r.student_id, status: r.status, _name: s ? s.name : null, _class: s ? s.class : null };
-      }));
-      updateDashboardStats();
-    }
-  } catch(e) { console.warn('loadFromSupabase error:', e); }
-}
-
-async function saveAttendanceToSupabase(records) {
-  if (!supabase) return false;
-  try {
-    const resolved = records.map(r => {
-      const localStudent = SAMPLE_STUDENTS.find(s => s.id === r.student_id);
-      const realUUID = localStudent
-        ? (studentIdMap[localStudent.student_id] || r.student_id)
-        : r.student_id;
-      return { student_id: realUUID, date: r.date, status: r.status };
+      studentIdMap[s.student_id] = s.id;  // STU-001 → UUID
     });
-    const { error } = await supabase
-      .from('attendance')
-      .upsert(resolved, { onConflict: 'student_id,date' });
-    if (error) { console.error('Attendance save error:', error.message); showToast('DB error: ' + error.message, 'error'); return false; }
-    return true;
-  } catch(e) { console.error('saveAttendanceToSupabase exception:', e); return false; }
+    renderStudents(SAMPLE_STUDENTS);
+    renderAttendanceList('X-A');
+    populateEnrollSelect();
+    updateDashboardStats(SAMPLE_STUDENTS.length);
+    console.log('Loaded', SAMPLE_STUDENTS.length, 'students from DB. studentIdMap:', studentIdMap);
+
+    // 2. Face descriptors — sync from DB into localStorage
+    const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
+    let changed = false;
+    students.forEach(s => {
+      if (s.photo_url) {
+        const local = SAMPLE_STUDENTS.find(st => st.student_id === s.student_id);
+        if (local) local.photo_url = s.photo_url;
+      }
+      if (s.face_descriptor && !stored[s.student_id]) {
+        try {
+          const parsed = JSON.parse(s.face_descriptor);
+          if (Array.isArray(parsed) && parsed.length) { stored[s.student_id] = parsed; changed = true; }
+        } catch(_) {}
+      }
+    });
+    if (changed) localStorage.setItem(ENROLL_KEY, JSON.stringify(stored));
+    if (faceModelsLoaded) buildRecognizer();
+  }
+
+  // 3. Today's attendance — keyed by DB UUID
+  const today = new Date().toISOString().split('T')[0];
+  const { data: att, error: aErr } = await supabase.from('attendance').select('*').eq('date', today);
+  if (aErr) { console.error('Load attendance error:', aErr.message); return; }
+
+  if (att && att.length > 0) {
+    attendanceMap = {};
+    att.forEach(r => {
+      // r.student_id = DB UUID (FK to students.id)
+      attendanceMap[r.student_id] = r.status;
+    });
+    renderAttendanceList('X-A');
+    renderRecentAttendance(att.map(r => {
+      const s = SAMPLE_STUDENTS.find(st => st.id === r.student_id);
+      return { uuid: r.student_id, status: r.status, _name: s ? s.name : '?', _class: s ? s.class : '?' };
+    }));
+    updateDashboardStats();
+    console.log('Loaded', att.length, 'attendance records for today');
+  }
 }
 
-// =============================================
+// ─────────────────────────────────────────────
+// SAVE ATTENDANCE TO DB
+// Records must have { student_id: UUID, date, status }
+// The FK constraint requires student_id to exist in students table.
+// ─────────────────────────────────────────────
+async function saveAttendanceToDB(records) {
+  if (!supabase) return false;
+  if (!records.length) { showToast('No attendance marked', 'error'); return false; }
+
+  const { error } = await supabase.from('attendance').upsert(records, { onConflict: 'student_id,date' });
+  if (error) {
+    console.error('Attendance save error:', error.message, error.raw);
+    showToast('DB error: ' + error.message, 'error');
+    return false;
+  }
+  return true;
+}
+
+// ─────────────────────────────────────────────
 // NAVIGATION
-// =============================================
+// ─────────────────────────────────────────────
 function showPage(name, el) {
   document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
   if (el) el.classList.add('active');
-  const titles = {dashboard:'Dashboard',mark:'Mark Attendance',face:'Face Scan',students:'Students',classes:'Classes',reports:'Reports',admin:'Admin Panel',setup:'Supabase Setup'};
+  const titles = { dashboard:'Dashboard', mark:'Mark Attendance', face:'Face Scan', students:'Students', classes:'Classes', reports:'Reports', admin:'Admin Panel', setup:'Supabase Setup' };
   document.getElementById('pageTitle').textContent = titles[name] || name;
-  // Stop camera when navigating away from face page
   if (name !== 'face') stopCamera();
   if (name === 'face') { populateEnrollSelect(); updateEnrolledCount(); }
+  if (name === 'reports') renderReportTable();
 }
 
-// =============================================
+// ─────────────────────────────────────────────
 // DASHBOARD STATS
-// =============================================
+// ─────────────────────────────────────────────
 function updateDashboardStats(total) {
-  const t = total || SAMPLE_STUDENTS.length;
-  const present = Object.values(attendanceMap).filter(s=>s==='present').length;
-  const absent  = Object.values(attendanceMap).filter(s=>s==='absent').length;
-  const late    = Object.values(attendanceMap).filter(s=>s==='late').length;
-  document.getElementById('statTotal').textContent = t;
+  const t       = total !== undefined ? total : SAMPLE_STUDENTS.length;
+  const vals    = Object.values(attendanceMap);
+  const present = vals.filter(s => s === 'present').length;
+  const absent  = vals.filter(s => s === 'absent').length;
+  const late    = vals.filter(s => s === 'late').length;
+  document.getElementById('statTotal').textContent   = t;
   document.getElementById('statPresent').textContent = present;
-  document.getElementById('statAbsent').textContent = absent;
-  document.getElementById('statLate').textContent = late;
-  const pct = t > 0 ? Math.round(present/t*100) : 0;
+  document.getElementById('statAbsent').textContent  = absent;
+  document.getElementById('statLate').textContent    = late;
+  const pct = t > 0 ? Math.round(present / t * 100) : 0;
   document.getElementById('statPresentPct').textContent = pct + '% attendance rate';
-  document.getElementById('statAbsentPct').textContent = t > 0 ? Math.round(absent/t*100) + '% absent rate' : '';
+  document.getElementById('statAbsentPct').textContent  = t > 0 ? Math.round(absent / t * 100) + '% absent rate' : '';
 }
 
-// =============================================
+// ─────────────────────────────────────────────
 // CHARTS
-// =============================================
+// ─────────────────────────────────────────────
 function renderWeeklyChart() {
   const days = ['MON','TUE','WED','THU','FRI'];
   const vals = [88, 92, 85, 79, 91];
-  const el = document.getElementById('weeklyChart');
-  el.innerHTML = days.map((d,i) => `
-    <div class="bar-wrap">
-      <div class="bar" style="height:${vals[i]}%" title="${vals[i]}%"></div>
-      <div class="bar-label">${d}</div>
-    </div>`).join('');
+  document.getElementById('weeklyChart').innerHTML = days.map((d,i) =>
+    `<div class="bar-wrap"><div class="bar" style="height:${vals[i]}%" title="${vals[i]}%"></div><div class="bar-label">${d}</div></div>`
+  ).join('');
 }
-
 function renderMonthlyChart() {
   const weeks = Array.from({length:20},(_,i)=>i+1);
-  const vals = weeks.map(()=>70+Math.round(Math.random()*25));
-  const el = document.getElementById('monthlyChart');
-  el.innerHTML = weeks.map((w,i) => `
-    <div class="bar-wrap">
-      <div class="bar" style="height:${vals[i]}%;background:linear-gradient(180deg,var(--teal),#1eab96);" title="${vals[i]}%"></div>
-      <div class="bar-label" style="font-size:0.5rem;">${w}</div>
-    </div>`).join('');
+  const vals  = weeks.map(() => 70 + Math.round(Math.random()*25));
+  document.getElementById('monthlyChart').innerHTML = weeks.map((w,i) =>
+    `<div class="bar-wrap"><div class="bar" style="height:${vals[i]}%;background:linear-gradient(180deg,var(--teal),#1eab96);" title="${vals[i]}%"></div><div class="bar-label" style="font-size:0.5rem;">${w}</div></div>`
+  ).join('');
 }
-
 function renderClassBars() {
-  const classes = [
-    {name:'X-A', pct:88}, {name:'XI-B', pct:72}, {name:'XII-C', pct:95}, {name:'X-B', pct:60}, {name:'XI-A', pct:83}
-  ];
-  const el = document.getElementById('classBars');
-  el.innerHTML = classes.map(c => `
-    <div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:5px;">
-        <span style="font-size:0.75rem;font-weight:600;">${c.name}</span>
-        <span style="font-size:0.72rem;color:var(--muted);font-family:'DM Mono',monospace;">${c.pct}%</span>
-      </div>
-      <div class="progress-wrap">
-        <div class="progress-fill" style="width:${c.pct}%;background:${c.pct>=80?'var(--teal)':c.pct>=60?'var(--gold)':'var(--red)'}"></div>
-      </div>
-    </div>`).join('');
+  const classes = [{name:'X-A',pct:88},{name:'XI-B',pct:72},{name:'XII-C',pct:95},{name:'X-B',pct:60},{name:'XI-A',pct:83}];
+  document.getElementById('classBars').innerHTML = classes.map(c =>
+    `<div><div style="display:flex;justify-content:space-between;margin-bottom:5px;"><span style="font-size:0.75rem;font-weight:600;">${c.name}</span><span style="font-size:0.72rem;color:var(--muted);font-family:'DM Mono',monospace;">${c.pct}%</span></div><div class="progress-wrap"><div class="progress-fill" style="width:${c.pct}%;background:${c.pct>=80?'var(--teal)':c.pct>=60?'var(--gold)':'var(--red)'}"></div></div></div>`
+  ).join('');
 }
 
-// =============================================
+// ─────────────────────────────────────────────
 // STUDENTS
-// =============================================
-function renderStudents(students) {
-  const grid = document.getElementById('studentsGrid');
-  grid.innerHTML = students.map((s,i) => {
-    const initials = s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-    const color    = avatarColors[i % avatarColors.length];
-    // Use real attendance from attendanceMap
-    const realId   = studentIdMap[s.student_id] || s.id;
-    const todayStatus = attendanceMap[realId] || attendanceMap[s.id];
-    const attColor = todayStatus === 'present' ? 'var(--teal)' : todayStatus === 'absent' ? 'var(--red)' : todayStatus === 'late' ? 'var(--gold)' : 'var(--muted)';
-    const attLabel = todayStatus || 'Not marked';
-    // Show enrolled photo if available
-    const avatarHtml = s.photo_url
+// ─────────────────────────────────────────────
+function renderStudents(list) {
+  document.getElementById('studentsGrid').innerHTML = list.map((s,i) => {
+    const initials    = s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const color       = avatarColors[i % avatarColors.length];
+    const todayStatus = getStatus(s);
+    const attColor    = todayStatus === 'present' ? 'var(--teal)' : todayStatus === 'absent' ? 'var(--red)' : todayStatus === 'late' ? 'var(--gold)' : 'var(--muted)';
+    const avatarHtml  = s.photo_url
       ? `<img src="${s.photo_url}" style="width:46px;height:46px;border-radius:50%;object-fit:cover;margin-bottom:10px;border:2px solid var(--teal);">`
       : `<div class="student-avatar" style="background:${color}22;color:${color};">${initials}</div>`;
-    return `
-    <div class="student-card">
-      ${avatarHtml}
-      <div class="student-name">${s.name}</div>
-      <div class="student-id">${s.student_id}</div>
-      <div class="student-stats">
-        <div class="student-stat">Class: <span>${s.class}</span></div>
-        <div class="student-stat">Today: <span style="color:${attColor}">${attLabel}</span></div>
-      </div>
-    </div>`;
+    return `<div class="student-card">${avatarHtml}<div class="student-name">${s.name}</div><div class="student-id">${s.student_id}</div><div class="student-stats"><div class="student-stat">Class: <span>${s.class}</span></div><div class="student-stat">Today: <span style="color:${attColor}">${todayStatus||'—'}</span></div></div></div>`;
   }).join('');
 }
 
 function filterStudents(q) {
-  const filtered = SAMPLE_STUDENTS.filter(s =>
+  renderStudents(SAMPLE_STUDENTS.filter(s =>
     s.name.toLowerCase().includes(q.toLowerCase()) ||
     s.student_id.toLowerCase().includes(q.toLowerCase())
-  );
-  renderStudents(filtered);
+  ));
 }
 
 async function addStudent() {
@@ -1373,240 +1382,249 @@ async function addStudent() {
   const sid   = document.getElementById('newStudentId').value.trim();
   const cls   = document.getElementById('newStudentClass').value;
   const email = document.getElementById('newStudentEmail').value.trim();
-  if (!name || !sid) { showToast('Name and ID are required', 'error'); return; }
+  if (!name || !sid) { showToast('Name and ID required', 'error'); return; }
 
-  const student = { id: 's' + Date.now(), name, student_id: sid, class: cls, email, photo_url: '' };
-  SAMPLE_STUDENTS.push(student);
+  const localStudent = { id: 's' + Date.now(), name, student_id: sid, class: cls, email, photo_url: '' };
+  SAMPLE_STUDENTS.push(localStudent);
   renderStudents(SAMPLE_STUDENTS);
   populateEnrollSelect();
   closeModal('addStudentModal');
 
   if (supabase) {
-    const { data, error } = await supabase
-      .from('students')
-      .insert([{ name, student_id: sid, class: cls, email }])
-      .select();
+    const { data, error } = await supabase.from('students').insert([{ name, student_id: sid, class: cls, email }]);
     if (error) {
       showToast('DB error: ' + error.message, 'error');
     } else if (data && data[0]) {
-      student.id = data[0].id;  // update local object with real UUID
+      // Update local entry with real UUID so attendance can link to it immediately
+      localStudent.id = data[0].id;
       studentIdMap[sid] = data[0].id;
-      showToast('Student saved — now go to Face Scan to enroll their face', 'success');
+      showToast('Student saved to DB ✓', 'success');
     }
   } else {
-    showToast('Student added — go to Face Scan to enroll their face', 'success');
+    showToast('Student added locally', 'success');
   }
   updateDashboardStats();
 }
 
-// =============================================
-// ATTENDANCE MARKING
-// =============================================
+// ─────────────────────────────────────────────
+// ATTENDANCE MARKING (manual)
+// ─────────────────────────────────────────────
 function selectClass(el, className) {
-  document.querySelectorAll('.class-btn').forEach(b=>b.classList.remove('selected'));
+  document.querySelectorAll('.class-btn').forEach(b => b.classList.remove('selected'));
   el.classList.add('selected');
   document.getElementById('selectedClassName').textContent = 'Class ' + className;
   renderAttendanceList(className);
 }
 
 function renderAttendanceList(className) {
-  const students = SAMPLE_STUDENTS.filter(s=>s.class===className);
-  const list = document.getElementById('attendanceList');
-  list.innerHTML = students.map((s,i) => {
+  const students = SAMPLE_STUDENTS.filter(s => s.class === className);
+  document.getElementById('attendanceList').innerHTML = students.map((s,i) => {
     const initials = s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-    const color = avatarColors[i%avatarColors.length];
-    const current = attendanceMap[s.id] || '';
-    return `
-    <div class="att-student-row">
+    const color    = avatarColors[i % avatarColors.length];
+    const current  = getStatus(s) || '';
+    return `<div class="att-student-row">
       <div class="mini-avatar" style="background:${color}22;color:${color};">${initials}</div>
       <div class="att-student-info">
         <div class="att-student-name">${s.name}</div>
         <div class="att-student-id">${s.student_id}</div>
       </div>
       <div class="att-controls">
-        <button class="att-btn att-btn-present ${current==='present'?'active':''}" onclick="setStatus('${s.id}','present',this)">Present</button>
-        <button class="att-btn att-btn-late    ${current==='late'?'active':''}"    onclick="setStatus('${s.id}','late',this)">Late</button>
-        <button class="att-btn att-btn-absent  ${current==='absent'?'active':''}"  onclick="setStatus('${s.id}','absent',this)">Absent</button>
+        <button class="att-btn att-btn-present ${current==='present'?'active':''}" onclick="markStudent('${s.student_id}','present',this)">Present</button>
+        <button class="att-btn att-btn-late    ${current==='late'?'active':''}"    onclick="markStudent('${s.student_id}','late',this)">Late</button>
+        <button class="att-btn att-btn-absent  ${current==='absent'?'active':''}"  onclick="markStudent('${s.student_id}','absent',this)">Absent</button>
       </div>
     </div>`;
   }).join('');
 }
 
-function setStatus(studentId, status, btn) {
-  attendanceMap[studentId] = status;
+// Called from attendance buttons — uses student_id TEXT as the key so no UUID confusion
+function markStudent(studentId_text, status, btn) {
+  const s = SAMPLE_STUDENTS.find(st => st.student_id === studentId_text);
+  if (!s) return;
+  setStatus_local(s, status);
   const row = btn.closest('.att-student-row');
-  row.querySelectorAll('.att-btn').forEach(b=>b.classList.remove('active'));
+  row.querySelectorAll('.att-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   updateDashboardStats();
 }
 
 function markAll(status) {
-  SAMPLE_STUDENTS.forEach(s => { attendanceMap[s.id] = status; });
+  SAMPLE_STUDENTS.forEach(s => setStatus_local(s, status));
   const className = document.getElementById('selectedClassName').textContent.replace('Class ','');
   renderAttendanceList(className);
   updateDashboardStats();
-  showToast(`✓ All students marked as ${status}`, 'success');
+  showToast('All marked as ' + status, 'success');
 }
 
 async function saveAttendance() {
   const today = new Date().toISOString().split('T')[0];
-  const selectedClass = document.getElementById('selectedClassName').textContent.replace('Class ', '');
-  const records = Object.entries(attendanceMap).map(([sid, status]) => {
-    const s = SAMPLE_STUDENTS.find(st => st.id === sid);
-    return { student_id: sid, date: today, status, class: s ? s.class : selectedClass };
-  });
-  if (records.length === 0) { showToast('No attendance marked yet', 'error'); return; }
 
-  // Add to sample data
-  records.forEach(r => SAMPLE_ATTENDANCE.push(r));
-  renderRecentAttendance(records);
+  // Build records — only students with a status AND a real DB UUID
+  const records = [];
+  const noUUID  = [];
+  SAMPLE_STUDENTS.forEach(s => {
+    const status = getStatus(s);
+    if (!status) return;  // not marked
+    const uuid = getUUID(s);
+    if (!uuid) { noUUID.push(s.name); return; }  // not in DB
+    records.push({ student_id: uuid, date: today, status });
+  });
+
+  if (records.length === 0) {
+    if (noUUID.length) {
+      showToast('Seed students to DB first — none have DB IDs', 'error');
+    } else {
+      showToast('Mark attendance first', 'error');
+    }
+    return;
+  }
+  if (noUUID.length) {
+    console.warn('Skipped (no DB UUID):', noUUID);
+  }
+
+  // Update UI immediately
+  renderRecentAttendance(records.map(r => {
+    const s = SAMPLE_STUDENTS.find(st => st.id === r.student_id);
+    return { uuid: r.student_id, status: r.status, _name: s ? s.name : '?', _class: s ? s.class : '?' };
+  }));
+  updateDashboardStats();
 
   if (supabase) {
-    const saved = await saveAttendanceToSupabase(records);
-    showToast(saved ? '✓ Attendance saved to database' : '✓ Saved locally (DB error)', saved ? 'success' : 'error');
+    const ok = await saveAttendanceToDB(records);
+    if (ok) showToast('Saved ' + records.length + ' records to DB ✓', 'success');
   } else {
-    showToast('✓ Attendance saved (' + records.length + ' records)', 'success');
+    showToast('Saved locally (' + records.length + ' records)', 'success');
   }
   renderReportTable();
 }
 
 function renderRecentAttendance(records) {
   const tbody = document.getElementById('recentAttTable');
-  if (!records || records.length === 0) return;
-  const rows = records.slice(-8).reverse().map(r => {
-    // Support both local (id lookup) and DB-loaded records (_name/_class fields)
-    const localStudent = SAMPLE_STUDENTS.find(s => s.id === r.student_id);
-    const name  = r._name  || (localStudent ? localStudent.name  : 'Unknown');
-    const cls   = r._class || (localStudent ? localStudent.class : '—');
+  if (!records || !records.length) return;
+  tbody.innerHTML = records.slice(-8).reverse().map(r => {
+    // Support records from DB load (uuid field) and local (student_id field)
+    const uuid = r.uuid || r.student_id;
+    const s    = SAMPLE_STUDENTS.find(st => st.id === uuid || st.student_id === uuid);
+    const name = r._name || (s ? s.name : 'Unknown');
+    const cls  = r._class || (s ? s.class : '—');
     const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
     const time = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
     return `<tr>
-      <td><div class="flex-center">
-        <div class="mini-avatar" style="background:rgba(240,192,96,0.1);color:var(--gold);font-size:0.6rem;">${initials}</div>
-        ${name}
-      </div></td>
+      <td><div class="flex-center"><div class="mini-avatar" style="background:rgba(240,192,96,0.1);color:var(--gold);font-size:0.6rem;">${initials}</div>${name}</div></td>
       <td>${cls}</td>
       <td style="font-family:'DM Mono',monospace;font-size:0.75rem;">${time}</td>
       <td><span class="status-badge status-${r.status}">${r.status}</span></td>
     </tr>`;
   }).join('');
-  tbody.innerHTML = rows;
 }
 
-// =============================================
-// QUICK MARK
-// =============================================
+// ─────────────────────────────────────────────
+// QUICK MARK (modal)
+// ─────────────────────────────────────────────
 async function quickMarkAttendance() {
   const sid    = document.getElementById('quickStudentId').value.trim();
-  const cls    = document.getElementById('quickClass').value;
   const status = document.getElementById('quickStatus').value;
-  if (!sid) { showToast('Please enter student ID', 'error'); return; }
-  const student = SAMPLE_STUDENTS.find(s=>s.student_id===sid);
-  if (!student) { showToast('Student not found: '+sid, 'error'); return; }
-  attendanceMap[student.id] = status;
-  renderRecentAttendance([{student_id:student.id, status}]);
+  if (!sid) { showToast('Enter student ID', 'error'); return; }
+
+  const s = SAMPLE_STUDENTS.find(st => st.student_id === sid);
+  if (!s) { showToast('Student not found: ' + sid, 'error'); return; }
+
+  setStatus_local(s, status);
+  renderRecentAttendance([{ uuid: s.id, status, _name: s.name, _class: s.class }]);
   updateDashboardStats();
   closeModal('markModal');
 
-  if (supabase) {
-    const realId = studentIdMap[student.student_id] || student.id;
-    const today  = new Date().toISOString().split('T')[0];
-    const { error } = await supabase
-      .from('attendance')
-      .upsert([{ student_id: realId, date: today, status }], { onConflict: 'student_id,date' });
-    showToast(error ? 'DB error: ' + error.message : `${student.name} marked ${status}`, error ? 'error' : 'success');
+  const uuid = getUUID(s);
+  if (supabase && uuid) {
+    const today = new Date().toISOString().split('T')[0];
+    const { error } = await supabase.from('attendance').upsert([{ student_id: uuid, date: today, status }], { onConflict: 'student_id,date' });
+    showToast(error ? 'DB error: ' + error.message : s.name + ' marked ' + status + ' ✓', error ? 'error' : 'success');
+  } else if (!uuid) {
+    showToast(s.name + ' marked locally (seed to DB first)', 'success');
   } else {
-    showToast(`${student.name} marked as ${status}`, 'success');
+    showToast(s.name + ' marked as ' + status, 'success');
   }
 }
 
-// =============================================
-// FACE RECOGNITION — face-api.js
-// =============================================
-const FACE_MODELS_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
-let faceModelsLoaded  = false;
-let faceRecognizer    = null;   // LabeledFaceDescriptors matcher
-let scanInterval      = null;
-let scannedToday      = new Set(); // student IDs already marked this session
+// ─────────────────────────────────────────────
+// FACE RECOGNITION
+// ─────────────────────────────────────────────
+const ENROLL_KEY    = 'acadex_face_descriptors';
+const FACEAPI_CDNS  = [
+  'https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js',
+  'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js',
+];
+const MODELS_URL    = 'https://unpkg.com/face-api.js@0.22.2/weights';
+let faceModelsLoaded = false;
+let faceRecognizer   = null;
+let scanInterval     = null;
+let scannedToday     = new Set();  // student_id TEXT of already-marked students this session
 
-// Storage key for enrolled descriptors
-const ENROLL_KEY = 'acadex_face_descriptors';
+function setFaceBadge(text, color, bg) {
+  const el = document.getElementById('faceModelStatus');
+  if (!el) return;
+  el.textContent = text; el.style.color = color; el.style.background = bg;
+}
 
-// --- Load face-api.js SDK then models dynamically ---
 function loadFaceModels() {
-  const badge = document.getElementById('faceModelStatus');
-  function setBadge(text, color, bg) {
-    if (!badge) return;
-    badge.textContent = text;
-    badge.style.color = color;
-    badge.style.background = bg;
-  }
-  setBadge('LOADING MODELS…', 'var(--gold)', 'rgba(240,192,96,0.1)');
+  setFaceBadge('LOADING AI…', 'var(--gold)', 'rgba(240,192,96,0.1)');
+  if (window.faceapi && window.faceapi.nets) { initModels(); return; }
 
-  // If face-api already loaded, go straight to loading models
-  if (window.faceapi) { doLoadModels(); return; }
-
-  // Dynamically inject face-api.js
-  const script = document.createElement('script');
-  script.src = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js';
-  script.onload = () => {
-    if (!window.faceapi) {
-      setBadge('MODEL ERROR', 'var(--red)', 'rgba(255,95,109,0.1)');
-      console.error('face-api.js loaded but faceapi global missing');
+  let idx = 0;
+  function tryNext() {
+    if (idx >= FACEAPI_CDNS.length) {
+      setFaceBadge('AI UNAVAILABLE', 'var(--red)', 'rgba(255,95,109,0.1)');
+      console.error('All face-api CDNs failed — needs HTTPS + internet');
       return;
     }
-    doLoadModels();
-  };
-  script.onerror = () => {
-    setBadge('MODEL ERROR', 'var(--red)', 'rgba(255,95,109,0.1)');
-    console.error('Failed to load face-api.js from CDN — check network/HTTPS');
-    showToast('Face AI failed to load — check network', 'error');
-  };
-  document.head.appendChild(script);
+    document.querySelectorAll('script[data-faceapi]').forEach(s => s.remove());
+    const s   = document.createElement('script');
+    s.setAttribute('data-faceapi','1');
+    s.src     = FACEAPI_CDNS[idx++];
+    s.onload  = () => (window.faceapi && window.faceapi.nets) ? initModels() : tryNext();
+    s.onerror = () => tryNext();
+    document.head.appendChild(s);
+  }
+  tryNext();
+}
 
-  async function doLoadModels() {
-    try {
-      setBadge('LOADING MODELS…', 'var(--gold)', 'rgba(240,192,96,0.1)');
-      await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODELS_URL),
-        faceapi.nets.faceLandmark68TinyNet.loadFromUri(FACE_MODELS_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODELS_URL),
-      ]);
-      faceModelsLoaded = true;
-      setBadge('AI READY', 'var(--teal)', 'rgba(56,217,192,0.1)');
-      buildRecognizer();
-      populateEnrollSelect();
-      updateEnrolledCount();
-      // If camera is already running, start the scan loop now
-      if (cameraStream) startScanLoop();
-    } catch(e) {
-      console.error('Model load error:', e);
-      setBadge('MODEL ERROR', 'var(--red)', 'rgba(255,95,109,0.1)');
-      showToast('Face model error — check console', 'error');
-    }
+async function initModels() {
+  setFaceBadge('LOADING MODELS…', 'var(--gold)', 'rgba(240,192,96,0.1)');
+  try {
+    await faceapi.nets.tinyFaceDetector.loadFromUri(MODELS_URL);
+    await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODELS_URL);
+    await faceapi.nets.faceRecognitionNet.loadFromUri(MODELS_URL);
+    faceModelsLoaded = true;
+    setFaceBadge('AI READY', 'var(--teal)', 'rgba(56,217,192,0.1)');
+    buildRecognizer();
+    populateEnrollSelect();
+    updateEnrolledCount();
+    if (cameraStream) startScanLoop();
+  } catch(e) {
+    console.error('Model load failed:', e);
+    setFaceBadge('MODEL ERROR', 'var(--red)', 'rgba(255,95,109,0.1)');
+    showToast('Face model error: ' + e.message, 'error');
   }
 }
 
-// --- Build matcher from stored descriptors ---
 function buildRecognizer() {
-  const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
+  if (!faceModelsLoaded || !window.faceapi) { faceRecognizer = null; return; }
+  const stored  = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
   const labeled = Object.entries(stored).map(([label, descs]) => {
-    const floatArrays = descs.map(d => new Float32Array(d));
-    return new faceapi.LabeledFaceDescriptors(label, floatArrays);
+    const floats = descs.map(d => new Float32Array(Array.isArray(d) ? d : Object.values(d)));
+    return new faceapi.LabeledFaceDescriptors(label, floats);
   });
-  faceRecognizer = labeled.length > 0
-    ? new faceapi.FaceMatcher(labeled, 0.50)
-    : null;
+  faceRecognizer = labeled.length > 0 ? new faceapi.FaceMatcher(labeled, 0.48) : null;
+  console.log('Recognizer built:', labeled.length, 'enrolled');
 }
 
-// --- Populate enroll dropdown ---
 function populateEnrollSelect() {
   const sel = document.getElementById('enrollStudentSelect');
   if (!sel) return;
   const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
   sel.innerHTML = '<option value="">— choose student —</option>' +
     SAMPLE_STUDENTS.map(s =>
-      `<option value="${s.student_id}" data-id="${s.id}">${s.name} (${s.student_id})${stored[s.student_id] ? ' ✓' : ''}</option>`
+      `<option value="${s.student_id}">${s.name} (${s.student_id})${stored[s.student_id]?' ✓':''}</option>`
     ).join('');
 }
 
@@ -1616,105 +1634,76 @@ function updateEnrolledCount() {
   if (el) el.textContent = Object.keys(stored).length + ' students enrolled';
 }
 
-// --- Camera start/stop ---
+// ── Camera ──
 async function startCamera() {
-  const statusEl     = document.getElementById('scanStatus');
-  const placeholder  = document.getElementById('cameraPlaceholder');
-  const placeholderP = placeholder ? placeholder.querySelector('p') : null;
+  const statusEl = document.getElementById('scanStatus');
+  const ph       = document.getElementById('cameraPlaceholder');
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     const msg = location.protocol === 'file:'
-      ? 'Camera needs a web server. Run via http://localhost or deploy to HTTPS.'
-      : 'Camera API unavailable — use HTTPS or localhost.';
+      ? 'Camera needs a web server — open via http://localhost'
+      : 'Camera unavailable — use HTTPS or localhost';
     statusEl.textContent = msg; statusEl.className = 'fail';
-    showToast('Camera unavailable — needs HTTPS', 'error'); return;
+    showToast(msg, 'error'); return;
   }
 
-  if (navigator.permissions) {
-    try {
-      const perm = await navigator.permissions.query({ name: 'camera' });
-      if (perm.state === 'denied') {
-        statusEl.textContent = 'Camera blocked. Click the lock/camera icon in your address bar → Allow → then click Start Camera.';
-        statusEl.className = 'fail';
-        showToast('Camera blocked in browser settings', 'error'); return;
-      }
-    } catch(_) {}
-  }
-
-  statusEl.textContent = 'Requesting camera access…'; statusEl.className = '';
+  statusEl.textContent = 'Requesting camera…'; statusEl.className = '';
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode:'user', width:{ideal:640}, height:{ideal:480} }
-    });
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:'user', width:{ideal:640}, height:{ideal:480} } });
   } catch(e) {
     if (e.name === 'OverconstrainedError') {
-      try { cameraStream = await navigator.mediaDevices.getUserMedia({ video: true }); }
-      catch(e2) { e = e2; }
+      try { cameraStream = await navigator.mediaDevices.getUserMedia({ video: true }); } catch(e2) { e = e2; }
     }
     if (!cameraStream) {
-      const msgs = {
-        NotAllowedError: 'Permission denied. Click the lock icon in the address bar → set Camera to Allow → click Start Camera.',
-        PermissionDeniedError: 'Permission denied. Allow camera in your browser settings.',
-        NotFoundError: 'No camera found on this device.',
-        DevicesNotFoundError: 'No camera found on this device.',
-        NotReadableError: 'Camera is in use by another app. Close it and try again.',
-        TrackStartError: 'Camera is in use by another app. Close it and try again.',
-      };
-      statusEl.textContent = msgs[e.name] || ('Camera error: ' + e.message);
+      const msgs = { NotAllowedError:'Permission denied — click the lock icon and allow camera', NotFoundError:'No camera found', NotReadableError:'Camera in use by another app' };
+      statusEl.textContent = msgs[e.name] || 'Camera error: ' + e.message;
       statusEl.className = 'fail';
-      if (placeholderP) placeholderP.textContent = '⚠ ' + (e.name || 'Error');
-      showToast('Camera error: ' + e.name, 'error');
-      console.error('Camera:', e.name, e.message); return;
+      showToast('Camera: ' + (msgs[e.name] || e.name), 'error'); return;
     }
   }
 
   const video = document.getElementById('cameraFeed');
   video.srcObject = cameraStream;
   video.style.display = 'block';
-  if (placeholder) placeholder.style.display = 'none';
+  if (ph) ph.style.display = 'none';
   document.getElementById('scanOverlay').style.display = 'none';
-  statusEl.textContent = faceModelsLoaded
-    ? (faceRecognizer ? 'Scanning for faces…' : 'Camera active — enroll faces first to enable recognition')
-    : 'Camera active — loading AI models…';
   statusEl.className = 'success';
-  showToast('Camera started', 'success');
 
-  // Wait for video metadata then start recognition loop
   video.onloadedmetadata = () => {
     resizeFaceCanvas();
-    if (faceModelsLoaded) startScanLoop();
+    if (faceModelsLoaded) {
+      startScanLoop();
+      statusEl.textContent = faceRecognizer ? 'Scanning for faces…' : 'Camera active — enroll a face first';
+    } else {
+      statusEl.textContent = 'Camera active — AI models loading…';
+    }
   };
+  showToast('Camera started', 'success');
 }
 
 function resizeFaceCanvas() {
-  const video  = document.getElementById('cameraFeed');
-  const canvas = document.getElementById('faceCanvas');
-  canvas.width  = video.videoWidth  || video.clientWidth;
-  canvas.height = video.videoHeight || video.clientHeight;
+  const v = document.getElementById('cameraFeed');
+  const c = document.getElementById('faceCanvas');
+  c.width  = v.videoWidth  || v.clientWidth;
+  c.height = v.videoHeight || v.clientHeight;
 }
 
 function stopCamera() {
   if (scanInterval) { clearInterval(scanInterval); scanInterval = null; }
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(t => t.stop());
-    cameraStream = null;
-  }
-  const video    = document.getElementById('cameraFeed');
-  const canvas   = document.getElementById('faceCanvas');
-  const overlay  = document.getElementById('scanOverlay');
-  const ph       = document.getElementById('cameraPlaceholder');
-  const phP      = ph ? ph.querySelector('p') : null;
-  video.style.display   = 'none';
-  overlay.style.display = 'flex';
-  if (ph) ph.style.display = 'flex';
-  if (phP) phP.textContent = 'Camera not started';
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  document.getElementById('scanStatus').textContent = 'Camera stopped — click Start Camera';
-  document.getElementById('scanStatus').className = '';
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  const video   = document.getElementById('cameraFeed');
+  const canvas  = document.getElementById('faceCanvas');
+  const overlay = document.getElementById('scanOverlay');
+  const ph      = document.getElementById('cameraPlaceholder');
+  if (video)   { video.style.display = 'none'; }
+  if (overlay) { overlay.style.display = 'flex'; }
+  if (ph)      { ph.style.display = 'flex'; const p = ph.querySelector('p'); if(p) p.textContent = 'Camera not started'; }
+  if (canvas)  { canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height); }
+  const st = document.getElementById('scanStatus');
+  if (st) { st.textContent = 'Camera stopped'; st.className = ''; }
 }
 
-// --- Continuous scan loop ---
+// ── Scan loop ──
 function startScanLoop() {
   if (scanInterval) clearInterval(scanInterval);
   scanInterval = setInterval(runFaceScan, 1500);
@@ -1722,240 +1711,173 @@ function startScanLoop() {
 
 async function runFaceScan() {
   const video = document.getElementById('cameraFeed');
-  if (!video || video.paused || video.ended || !cameraStream) return;
-  if (!faceModelsLoaded) return;
+  if (!video || !cameraStream || !faceModelsLoaded) return;
 
   const canvas = document.getElementById('faceCanvas');
   resizeFaceCanvas();
-
-  const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
-  const detections = await faceapi
-    .detectAllFaces(video, opts)
-    .withFaceLandmarks(true)
-    .withFaceDescriptors();
-
-  // Draw boxes on canvas
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  const opts       = new faceapi.TinyFaceDetectorOptions({ inputSize:320, scoreThreshold:0.5 });
+  const detections = await faceapi.detectAllFaces(video, opts).withFaceLandmarks(true).withFaceDescriptors();
+
+  if (!detections.length) {
+    const st = document.getElementById('scanStatus');
+    if (st) st.textContent = faceRecognizer ? 'No face detected' : 'Camera active — enroll a face first';
+    return;
+  }
 
   const scaleX = canvas.width  / (video.videoWidth  || canvas.width);
   const scaleY = canvas.height / (video.videoHeight || canvas.height);
 
-  if (detections.length === 0) {
-    document.getElementById('scanStatus').textContent = faceRecognizer ? 'No face detected — look at the camera' : 'Camera active — enroll faces first';
-    document.getElementById('scanStatus').className = '';
-    return;
-  }
-
   for (const det of detections) {
-    const box = det.detection.box;
-    const x = box.x * scaleX, y = box.y * scaleY;
-    const w = box.width * scaleX, h = box.height * scaleY;
+    const { x, y, width: w, height: h } = det.detection.box;
+    const bx = x*scaleX, by = y*scaleY, bw = w*scaleX, bh = h*scaleY;
 
-    let label = 'Unknown', color = '#ff5f6d', matched = null;
+    let label = 'Unknown', color = '#ff5f6d', matchedStudent = null;
     if (faceRecognizer) {
       const result = faceRecognizer.findBestMatch(det.descriptor);
       if (result.label !== 'unknown') {
-        label   = result.label; // this is student_id text e.g. STU-001
-        color   = '#38d9c0';
-        matched = SAMPLE_STUDENTS.find(s => s.student_id === label);
-        if (matched) label = matched.name;
+        matchedStudent = SAMPLE_STUDENTS.find(s => s.student_id === result.label);
+        if (matchedStudent) { label = matchedStudent.name; color = '#38d9c0'; }
       }
     }
 
-    // Draw bounding box
-    ctx.strokeStyle = color;
-    ctx.lineWidth   = 2;
-    ctx.strokeRect(x, y, w, h);
-
-    // Draw name tag
+    // Draw box + name tag
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.strokeRect(bx, by, bw, bh);
     ctx.fillStyle = color + 'cc';
-    ctx.fillRect(x, y - 22, w, 22);
-    ctx.fillStyle = '#0a0a0f';
-    ctx.font = 'bold 11px DM Sans, sans-serif';
-    ctx.fillText(label, x + 6, y - 6);
+    ctx.fillRect(bx, by - 22, bw, 22);
+    ctx.fillStyle = '#0a0a0f'; ctx.font = 'bold 11px DM Sans,sans-serif';
+    ctx.fillText(label, bx + 6, by - 6);
 
-    // Auto-mark attendance if matched and not already marked this session
-    if (matched && !scannedToday.has(matched.student_id)) {
-      scannedToday.add(matched.student_id);
-      await markFaceAttendance(matched);
+    if (matchedStudent && !scannedToday.has(matchedStudent.student_id)) {
+      scannedToday.add(matchedStudent.student_id);
+      await markFaceAttendance(matchedStudent);
     }
   }
 
-  document.getElementById('scanStatus').textContent = detections.length + ' face(s) detected';
-  document.getElementById('scanStatus').className = detections.length > 0 ? 'success' : '';
+  const st = document.getElementById('scanStatus');
+  if (st) { st.textContent = detections.length + ' face(s) detected'; st.className = 'success'; }
 }
 
 async function markFaceAttendance(student) {
   const status = 'present';
-  const time   = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
-  // Use the real DB UUID if available, fallback to local id
-  const realId = studentIdMap[student.student_id] || student.id;
-  // Store in attendanceMap under BOTH keys so lookups always work
-  attendanceMap[student.id] = status;
-  attendanceMap[realId]     = status;
+  const uuid   = getUUID(student);
+  setStatus_local(student, status);
 
   scanCount++;
   document.getElementById('scanCount').textContent = scanCount + ' SCANNED';
-  document.getElementById('scanStatus').textContent = '✓ Marked: ' + student.name;
-  document.getElementById('scanStatus').className = 'success';
+  showToast(student.name + ' marked present ✓', 'success');
 
   // Add to scan log
-  const log   = document.getElementById('scanLog');
-  const empty = log.querySelector('[style*="text-align:center"]');
+  const log      = document.getElementById('scanLog');
+  const empty    = log.querySelector('[style*="text-align:center"]');
   if (empty) empty.remove();
-  const idx    = SAMPLE_STUDENTS.findIndex(s => s.student_id === student.student_id);
-  const color  = avatarColors[(idx >= 0 ? idx : 0) % avatarColors.length];
+  const idx      = SAMPLE_STUDENTS.findIndex(s => s.student_id === student.student_id);
+  const color    = avatarColors[Math.max(0,idx) % avatarColors.length];
   const initials = student.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-  // Show enrolled photo if available
-  const photoHtml = student.photo_url
+  const time     = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  const ph       = student.photo_url
     ? `<img src="${student.photo_url}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;">`
     : `<div class="mini-avatar" style="background:${color}22;color:${color};">${initials}</div>`;
-
   const entry = document.createElement('div');
-  entry.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px;background:var(--ink3);border-radius:10px;animation:fadeIn 0.3s ease;';
-  entry.innerHTML = `
-    ${photoHtml}
-    <div style="flex:1;">
-      <div style="font-size:0.8rem;font-weight:600;">${student.name}</div>
-      <div style="font-size:0.65rem;color:var(--muted);">${student.student_id} · ${student.class}</div>
-    </div>
-    <div style="text-align:right;">
-      <span class="status-badge status-present">present</span>
-      <div style="font-size:0.6rem;color:var(--muted);margin-top:3px;font-family:'DM Mono',monospace;">${time}</div>
-    </div>`;
+  entry.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px;background:var(--ink3);border-radius:10px;';
+  entry.innerHTML = `${ph}<div style="flex:1;"><div style="font-size:0.8rem;font-weight:600;">${student.name}</div><div style="font-size:0.65rem;color:var(--muted);">${student.student_id} · ${student.class}</div></div><div style="text-align:right;"><span class="status-badge status-present">present</span><div style="font-size:0.6rem;color:var(--muted);margin-top:3px;font-family:'DM Mono',monospace;">${time}</div></div>`;
   log.insertBefore(entry, log.firstChild);
   updateDashboardStats();
-  showToast('✓ ' + student.name + ' marked present', 'success');
 
-  // ── Push to Supabase ──
-  if (supabase) {
+  // Push to DB
+  if (supabase && uuid) {
     const today = new Date().toISOString().split('T')[0];
-    const { error } = await supabase
-      .from('attendance')
-      .upsert([{ student_id: realId, date: today, status }], { onConflict: 'student_id,date' });
-    if (error) {
-      console.error('Face attendance DB error:', error.message);
-      showToast('DB error: ' + error.message, 'error');
-    }
+    const { error } = await supabase.from('attendance').upsert([{ student_id: uuid, date: today, status }], { onConflict: 'student_id,date' });
+    if (error) { console.error('Face attendance DB error:', error.message, error.raw); showToast('DB error: ' + error.message, 'error'); }
+  } else if (!uuid) {
+    console.warn('Face attendance: no DB UUID for', student.name, '— marked locally only. Seed students first.');
   }
 }
 
-// --- Enrollment: capture face descriptor + photo, save both locally and to DB ---
 async function enrollFace() {
   const sel = document.getElementById('enrollStudentSelect');
   const sid = sel ? sel.value : '';
-  if (!sid) { showToast('Select a student first', 'error'); return; }
-  if (!faceModelsLoaded) { showToast('AI models still loading — wait a moment', 'error'); return; }
+  if (!sid)              { showToast('Select a student', 'error'); return; }
+  if (!faceModelsLoaded) { showToast('AI models still loading…', 'error'); return; }
 
   const video = document.getElementById('cameraFeed');
-  if (!cameraStream || video.style.display === 'none') {
-    showToast('Start the camera first, look at it, then click Capture', 'error'); return;
-  }
+  if (!cameraStream || video.style.display === 'none') { showToast('Start camera first', 'error'); return; }
 
-  const student = SAMPLE_STUDENTS.find(s => s.student_id === sid);
+  const student  = SAMPLE_STUDENTS.find(s => s.student_id === sid);
   if (!student) { showToast('Student not found', 'error'); return; }
 
   const statusEl = document.getElementById('scanStatus');
-  statusEl.textContent = 'Detecting face for ' + student.name + '…';
-  statusEl.className = '';
+  statusEl.textContent = 'Detecting face for ' + student.name + '…'; statusEl.className = '';
 
-  const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.4 });
-  const detection = await faceapi
-    .detectSingleFace(video, opts)
-    .withFaceLandmarks(true)
-    .withFaceDescriptor();
+  const opts      = new faceapi.TinyFaceDetectorOptions({ inputSize:320, scoreThreshold:0.4 });
+  const detection = await faceapi.detectSingleFace(video, opts).withFaceLandmarks(true).withFaceDescriptor();
 
   if (!detection) {
-    statusEl.textContent = 'No face detected — ensure good lighting and face is visible';
-    statusEl.className = 'fail';
-    showToast('No face detected — try again', 'error'); return;
+    statusEl.textContent = 'No face detected — ensure good lighting'; statusEl.className = 'fail';
+    showToast('No face detected', 'error'); return;
   }
 
-  // ── Capture photo as base64 JPEG ──
-  const photoCanvas = document.createElement('canvas');
-  photoCanvas.width  = video.videoWidth  || 320;
-  photoCanvas.height = video.videoHeight || 240;
-  photoCanvas.getContext('2d').drawImage(video, 0, 0, photoCanvas.width, photoCanvas.height);
-  const photoBase64 = photoCanvas.toDataURL('image/jpeg', 0.7); // base64 data URL
+  // Capture photo
+  const pc = document.createElement('canvas');
+  pc.width = video.videoWidth || 320; pc.height = video.videoHeight || 240;
+  pc.getContext('2d').drawImage(video, 0, 0, pc.width, pc.height);
+  const photo = pc.toDataURL('image/jpeg', 0.6);
+  student.photo_url = photo;
 
-  // ── Save descriptor to localStorage ──
+  // Save descriptor to localStorage
   const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
   if (!stored[sid]) stored[sid] = [];
   stored[sid].push(Array.from(detection.descriptor));
-  if (stored[sid].length > 5) stored[sid] = stored[sid].slice(-5); // keep last 5 samples
+  if (stored[sid].length > 5) stored[sid] = stored[sid].slice(-5);
   localStorage.setItem(ENROLL_KEY, JSON.stringify(stored));
-
-  // ── Save photo URL to SAMPLE_STUDENTS local cache ──
-  student.photo_url = photoBase64;
-
-  // ── Update student card to show enrolled photo ──
-  renderStudents(SAMPLE_STUDENTS);
 
   buildRecognizer();
   populateEnrollSelect();
   updateEnrolledCount();
-
-  statusEl.textContent = '✓ Face enrolled for ' + student.name;
-  statusEl.className = 'success';
-  showToast('Face enrolled: ' + student.name, 'success');
+  renderStudents(SAMPLE_STUDENTS);
   scannedToday.delete(sid);
+  statusEl.textContent = '✓ Face enrolled for ' + student.name; statusEl.className = 'success';
+  showToast('Enrolled: ' + student.name, 'success');
 
-  // ── Push photo URL to Supabase students table ──
-  if (supabase) {
-    const realId = studentIdMap[sid] || student.id;
-    // Store the face descriptor JSON + photo URL in the students row
-    const descriptorJson = JSON.stringify(stored[sid]);
-    const { error } = await supabase
-      .from('students')
-      .update({ photo_url: photoBase64, face_descriptor: descriptorJson })
-      .eq('id', realId);
-    if (error) {
-      console.warn('Could not save face to DB (ensure photo_url and face_descriptor columns exist):', error.message);
-      showToast('Enrolled locally (add photo_url & face_descriptor columns to save to DB)', 'success');
-    } else {
-      showToast('Face & photo saved to database: ' + student.name, 'success');
-    }
+  // Save to DB
+  const uuid = getUUID(student);
+  if (supabase && uuid) {
+    const { error } = await supabase.from('students').update({ photo_url: photo, face_descriptor: JSON.stringify(stored[sid]) }).eq('id', uuid);
+    if (error) console.warn('Could not save face to DB:', error.message);
+    else showToast('Face + photo saved to DB ✓', 'success');
+  } else if (!uuid) {
+    showToast('Enrolled locally (seed students to DB to persist)', 'success');
   }
 }
 
 function clearEnrollments() {
-  if (!confirm('Clear all enrolled faces? Students will need to re-enroll.')) return;
+  if (!confirm('Clear all enrolled faces?')) return;
   localStorage.removeItem(ENROLL_KEY);
   SAMPLE_STUDENTS.forEach(s => { s.photo_url = ''; });
   buildRecognizer();
   populateEnrollSelect();
   updateEnrolledCount();
-  showToast('All face enrollments cleared', 'success');
+  showToast('Enrollments cleared', 'success');
 }
 
-// =============================================
+// ─────────────────────────────────────────────
 // CLASSES
-// =============================================
+// ─────────────────────────────────────────────
 const SAMPLE_CLASSES = [
-  { name:'X-A',   subject:'Mathematics', teacher:'Mr. Rajan', students:32, avg:88, schedule:'Mon–Fri · 08:00–09:00', room:'Room 201' },
-  { name:'XI-B',  subject:'Physics',     teacher:'Ms. Asha',  students:28, avg:72, schedule:'Mon–Fri · 09:10–10:10', room:'Lab 1' },
-  { name:'XII-C', subject:'English',     teacher:'Mr. David', students:30, avg:95, schedule:'Mon–Fri · 10:20–11:20', room:'Room 105' },
-  { name:'X-B',   subject:'Chemistry',   teacher:'Ms. Priya', students:29, avg:60, schedule:'Mon–Sat · 11:30–12:30', room:'Lab 2' },
-  { name:'XI-A',  subject:'Biology',     teacher:'Mr. Suresh',students:31, avg:83, schedule:'Mon–Fri · 13:00–14:00', room:'Lab 3' },
+  { name:'X-A',   subject:'Mathematics', teacher:'Mr. Rajan', students:32, avg:88, schedule:'Mon–Fri · 08:00–09:00' },
+  { name:'XI-B',  subject:'Physics',     teacher:'Ms. Asha',  students:28, avg:72, schedule:'Mon–Fri · 09:10–10:10' },
+  { name:'XII-C', subject:'English',     teacher:'Mr. David', students:30, avg:95, schedule:'Mon–Fri · 10:20–11:20' },
+  { name:'X-B',   subject:'Chemistry',   teacher:'Ms. Priya', students:29, avg:60, schedule:'Mon–Sat · 11:30–12:30' },
+  { name:'XI-A',  subject:'Biology',     teacher:'Mr. Suresh',students:31, avg:83, schedule:'Mon–Fri · 13:00–14:00' },
 ];
 
 function renderClassesTable() {
-  const tbody = document.getElementById('classesTable');
-  tbody.innerHTML = SAMPLE_CLASSES.map(c => `
-    <tr>
-      <td style="font-family:'Syne',sans-serif;font-weight:700;">${c.name}</td>
-      <td>${c.subject}</td>
-      <td>${c.teacher}</td>
-      <td style="font-family:'DM Mono',monospace;">${c.students}</td>
-      <td>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div class="progress-wrap" style="width:60px;"><div class="progress-fill" style="width:${c.avg}%;background:${c.avg>=80?'var(--teal)':c.avg>=60?'var(--gold)':'var(--red)'}"></div></div>
-          <span style="font-size:0.75rem;font-family:'DM Mono',monospace;">${c.avg}%</span>
-        </div>
-      </td>
-      <td style="font-size:0.75rem;color:var(--muted);">${c.schedule}</td>
-    </tr>`).join('');
+  document.getElementById('classesTable').innerHTML = SAMPLE_CLASSES.map(c =>
+    `<tr><td style="font-family:'Syne',sans-serif;font-weight:700;">${c.name}</td><td>${c.subject}</td><td>${c.teacher}</td><td style="font-family:'DM Mono',monospace;">${c.students}</td><td><div style="display:flex;align-items:center;gap:8px;"><div class="progress-wrap" style="width:60px;"><div class="progress-fill" style="width:${c.avg}%;background:${c.avg>=80?'var(--teal)':c.avg>=60?'var(--gold)':'var(--red)'}"></div></div><span style="font-size:0.75rem;font-family:'DM Mono',monospace;">${c.avg}%</span></div></td><td style="font-size:0.75rem;color:var(--muted);">${c.schedule}</td></tr>`
+  ).join('');
 }
 
 async function addClass() {
@@ -1963,145 +1885,116 @@ async function addClass() {
   const subject  = document.getElementById('newClassSubject').value.trim();
   const teacher  = document.getElementById('newClassTeacher').value.trim();
   const schedule = document.getElementById('newClassSchedule').value.trim();
-  if (!name || !subject) { showToast('Class name and subject required', 'error'); return; }
+  if (!name || !subject) { showToast('Name and subject required', 'error'); return; }
   SAMPLE_CLASSES.push({ name, subject, teacher, students:0, avg:0, schedule });
   renderClassesTable();
   closeModal('addClassModal');
   if (supabase) {
     const { error } = await supabase.from('classes').insert([{ name, subject, teacher, schedule }]);
-    showToast(error ? 'DB error: ' + error.message : 'Class saved: ' + name, error ? 'error' : 'success');
+    showToast(error ? 'DB error: ' + error.message : 'Class saved ✓', error ? 'error' : 'success');
   } else {
-    showToast('Class added: ' + name, 'success');
+    showToast('Class added', 'success');
   }
 }
 
-// =============================================
+// ─────────────────────────────────────────────
 // REPORTS
-// =============================================
+// ─────────────────────────────────────────────
 function renderReportTable() {
-  const tbody = document.getElementById('reportTable');
-  tbody.innerHTML = SAMPLE_STUDENTS.map((s,i) => {
-    // Use real attendance data from attendanceMap/DB if available
-    const todayStatus = attendanceMap[s.id] || attendanceMap[studentIdMap[s.student_id]];
-    const present = todayStatus === 'present' ? 1 : 0;
-    const absent  = todayStatus === 'absent'  ? 1 : 0;
-    const late    = todayStatus === 'late'    ? 1 : 0;
-    const total   = present + absent + late || 1;
-    const rate    = Math.round(present / total * 100);
-    const color   = avatarColors[i%avatarColors.length];
-    const initials= s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-    const statusLabel = todayStatus || '—';
-    const badgeClass  = todayStatus === 'present' ? 'present' : todayStatus === 'absent' ? 'absent' : todayStatus === 'late' ? 'late' : 'absent';
+  document.getElementById('reportTable').innerHTML = SAMPLE_STUDENTS.map((s,i) => {
+    const status   = getStatus(s);
+    const present  = status === 'present' ? 1 : 0;
+    const absent   = status === 'absent'  ? 1 : 0;
+    const late     = status === 'late'    ? 1 : 0;
+    const rate     = status === 'present' ? 100 : status === 'late' ? 50 : status === 'absent' ? 0 : null;
+    const color    = avatarColors[i % avatarColors.length];
+    const initials = s.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    const rateStr  = rate !== null ? rate + '%' : '—';
+    const badgeCls = status || 'absent';
     return `<tr>
-      <td><div class="flex-center">
-        <div class="mini-avatar" style="background:${color}22;color:${color};font-size:0.6rem;">${initials}</div>
-        ${s.name}
-      </div></td>
+      <td><div class="flex-center"><div class="mini-avatar" style="background:${color}22;color:${color};font-size:0.6rem;">${initials}</div>${s.name}</div></td>
       <td>${s.class}</td>
       <td style="color:var(--teal);font-family:'DM Mono',monospace;">${present}</td>
       <td style="color:var(--red);font-family:'DM Mono',monospace;">${absent}</td>
       <td style="color:var(--gold);font-family:'DM Mono',monospace;">${late}</td>
-      <td>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div class="progress-wrap" style="width:50px;"><div class="progress-fill" style="width:${rate}%;background:${rate>=80?'var(--teal)':rate>=60?'var(--gold)':'var(--red)'}"></div></div>
-          <span style="font-size:0.75rem;font-family:'DM Mono',monospace;">${todayStatus ? rate+'%' : '—'}</span>
-        </div>
-      </td>
-      <td><span class="status-badge status-${badgeClass}">${statusLabel}</span></td>
+      <td><span style="font-size:0.75rem;font-family:'DM Mono',monospace;">${rateStr}</span></td>
+      <td><span class="status-badge status-${badgeCls}">${status || '—'}</span></td>
     </tr>`;
   }).join('');
 }
 
 function exportReport() {
-  const rows = [['Name','Class','Present','Absent','Late','Rate']];
-  SAMPLE_STUDENTS.forEach(s => {
-    const present = Math.floor(12+Math.random()*6);
-    rows.push([s.name, s.class, present, 18-present-1, 1, Math.round(present/18*100)+'%']);
-  });
-  const csv = rows.map(r=>r.join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  const rows = [['Name','Class','Status Today']];
+  SAMPLE_STUDENTS.forEach(s => rows.push([s.name, s.class, getStatus(s) || 'not marked']));
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const a   = document.createElement('a');
+  a.href    = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
   a.download = 'attendance_report.csv';
   a.click();
-  showToast('✓ Report exported as CSV', 'success');
+  showToast('Report exported ✓', 'success');
 }
 
-// =============================================
+// ─────────────────────────────────────────────
 // ADMIN
-// =============================================
-function saveSettings() {
-  showToast('✓ Settings saved', 'success');
-}
+// ─────────────────────────────────────────────
+function saveSettings() { showToast('Settings saved', 'success'); }
 
 function testConnection() {
   const url = document.getElementById('adminSupaUrl').value.trim();
   const key = document.getElementById('adminSupaKey').value.trim();
-  if (!url || !key) { showToast('Enter URL and Key first', 'error'); return; }
-  localStorage.setItem('acadex_url', url);
-  localStorage.setItem('acadex_key', key);
+  if (!url || !key) { showToast('Enter URL and Key', 'error'); return; }
+  localStorage.setItem('acadex_url', url); localStorage.setItem('acadex_key', key);
   SUPABASE_URL = url; SUPABASE_KEY = key;
-  supabase = null;
-  const su = document.getElementById('supaUrl');
-  const sk = document.getElementById('supaKey');
-  if (su) su.value = url;
-  if (sk) sk.value = key;
+  ['supaUrl'].forEach(id => { const el=document.getElementById(id); if(el) el.value=url; });
+  ['supaKey'].forEach(id => { const el=document.getElementById(id); if(el) el.value=key; });
   initSupabase(url, key);
-}
-
-function createTables() {
-  showToast('Run the SQL from the Setup page in Supabase SQL editor', 'error');
 }
 
 async function seedData() {
   if (!supabase) { showToast('Connect Supabase first', 'error'); return; }
-  const { error } = await supabase.from('students').insert(
-    SAMPLE_STUDENTS.map(s => ({ name: s.name, student_id: s.student_id, class: s.class, email: s.email }))
-  );
+  const rows = SAMPLE_STUDENTS.map(s => ({ name: s.name, student_id: s.student_id, class: s.class, email: s.email || '' }));
+  const { data, error } = await supabase.from('students').upsert(rows, { onConflict: 'student_id' });
   if (error) {
-    showToast('Seed failed: ' + error.message, 'error');
+    showToast('Seed error: ' + error.message, 'error');
   } else {
-    showToast('Sample data seeded', 'success');
-    loadFromSupabase();
+    showToast('Students seeded ✓ — reloading…', 'success');
+    await loadFromSupabase();  // re-populate studentIdMap with real UUIDs
   }
 }
 
 async function clearData() {
-  if (!confirm('Clear all attendance data? This cannot be undone.')) return;
-  Object.keys(attendanceMap).forEach(k => delete attendanceMap[k]);
+  if (!confirm('Clear all attendance? This cannot be undone.')) return;
+  attendanceMap = {};
   updateDashboardStats();
   if (supabase) {
-    const { error } = await supabase.from('attendance').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    showToast(error ? 'DB error: ' + error.message : 'All attendance data cleared', error ? 'error' : 'success');
+    const today = new Date().toISOString().split('T')[0];
+    const { error } = await supabase.from('attendance').delete().eq('date', today);
+    showToast(error ? 'DB error: ' + error.message : 'Today\'s attendance cleared ✓', error ? 'error' : 'success');
   } else {
     showToast('Local data cleared', 'success');
   }
 }
 
-// =============================================
+// ─────────────────────────────────────────────
 // MODALS
-// =============================================
-function openModal(id) {
-  document.getElementById(id).classList.add('open');
-}
-function closeModal(id) {
-  document.getElementById(id).classList.remove('open');
-}
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay) overlay.classList.remove('open');
-  });
+// ─────────────────────────────────────────────
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
 });
 
-// =============================================
+// ─────────────────────────────────────────────
 // TOAST
-// =============================================
+// ─────────────────────────────────────────────
 function showToast(msg, type='success') {
-  const t = document.getElementById('toast');
-  const icon = type==='success' ? '✓' : '✕';
+  const t    = document.getElementById('toast');
+  const icon = type === 'success' ? '✓' : '✕';
   t.innerHTML = `<span style="color:${type==='success'?'var(--teal)':'var(--red)'}">${icon}</span> ${msg}`;
   t.className = `toast ${type} show`;
-  setTimeout(()=>t.classList.remove('show'), 3000);
+  setTimeout(() => t.classList.remove('show'), 3500);
 }
 </script>
+
 </body>
 </html>
