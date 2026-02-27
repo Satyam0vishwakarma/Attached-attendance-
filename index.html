@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ACADEX — Attendance Management</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 <style>
   :root {
     --ink: #0a0a0f;
@@ -261,7 +262,7 @@
   .camera-placeholder { text-align:center; }
   .camera-placeholder .icon { font-size:2.5rem; margin-bottom:8px; opacity:0.3; }
   .camera-placeholder p { font-size:0.75rem; color:var(--muted); }
-  #scanStatus { font-size:0.72rem; color:var(--muted); text-align:center; margin-bottom:12px; font-family:'DM Mono',monospace; }
+  #scanStatus { font-size:0.72rem; color:var(--muted); text-align:center; margin-bottom:12px; font-family:'DM Mono',monospace; line-height:1.5; min-height:2.5em; }
   #scanStatus.success { color:var(--teal); }
   #scanStatus.fail { color:var(--red); }
 
@@ -500,7 +501,6 @@
           <div class="card" style="display:flex;flex-direction:column;gap:0;">
             <div class="card-header">
               <span class="card-title">Classes Today</span>
-              <span class="card-badge badge-teal">LIVE</span>
             </div>
             <div id="classesToday">
               <div class="class-item">
@@ -621,10 +621,11 @@
           <div class="card">
             <div class="card-header">
               <span class="card-title">Face Recognition Scanner</span>
-              <span class="card-badge badge-teal">AI POWERED</span>
+              <span class="card-badge badge-teal" id="faceModelStatus">LOADING MODELS…</span>
             </div>
-            <div class="camera-box" id="cameraBox">
-              <video id="cameraFeed" autoplay playsinline></video>
+            <div class="camera-box" id="cameraBox" style="position:relative;">
+              <video id="cameraFeed" autoplay playsinline style="width:100%;height:100%;object-fit:cover;display:none;border-radius:12px;"></video>
+              <canvas id="faceCanvas" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;border-radius:12px;"></canvas>
               <div class="scan-overlay" id="scanOverlay">
                 <div class="scan-frame">
                   <div class="scan-line"></div>
@@ -632,16 +633,15 @@
                   <div class="scan-corner-tl"></div>
                 </div>
               </div>
-              <div class="camera-placeholder" id="cameraPlaceholder">
-                <div class="icon">◉</div>
-                <p>Camera not started</p>
+              <div class="camera-placeholder" id="cameraPlaceholder" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                <div class="icon" style="font-size:2.5rem;margin-bottom:8px;opacity:0.3;">◉</div>
+                <p style="font-size:0.75rem;color:var(--muted);">Camera not started</p>
               </div>
             </div>
-            <div id="scanStatus">Ready to scan — click Start Camera</div>
+            <div id="scanStatus" style="font-size:0.72rem;color:var(--muted);text-align:center;margin:10px 0 12px;font-family:'DM Mono',monospace;line-height:1.5;min-height:2.5em;">Ready — click Start Camera</div>
             <div style="display:flex;gap:10px;">
-              <button class="btn btn-primary" style="flex:1;" onclick="startCamera()">▶ Start Camera</button>
+              <button class="btn btn-primary" style="flex:1;" id="startCamBtn" onclick="startCamera()">▶ Start Camera</button>
               <button class="btn btn-ghost" style="flex:1;" onclick="stopCamera()">■ Stop</button>
-              <button class="btn btn-ghost" style="flex:1;" onclick="simulateScan()">⚡ Simulate</button>
             </div>
           </div>
 
@@ -656,22 +656,27 @@
           </div>
         </div>
 
+        <!-- Enroll Section -->
         <div class="card" style="margin-top:16px;">
           <div class="card-header">
-            <span class="card-title">Face Registration</span>
-            <span class="card-badge badge-gold">ENROLL NEW</span>
+            <span class="card-title">Face Enrollment</span>
+            <span class="card-badge badge-gold">REGISTER FACE</span>
           </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
-            <div class="form-group">
-              <label class="form-label">Student Name</label>
-              <input class="form-input" id="enrollName" placeholder="Full name">
+          <p style="font-size:0.72rem;color:var(--muted);margin-bottom:14px;">Select a student, start the camera, look at it, then click Capture. The face will be saved and used for future recognition.</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:14px;align-items:flex-end;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Select Student</label>
+              <select class="form-input form-select" id="enrollStudentSelect">
+                <option value="">— choose student —</option>
+              </select>
             </div>
-            <div class="form-group">
-              <label class="form-label">Student ID</label>
-              <input class="form-input" id="enrollId" placeholder="STU-XXXX">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Enrolled Faces</label>
+              <div id="enrolledCount" style="font-family:'DM Mono',monospace;font-size:0.8rem;color:var(--teal);padding:10px 14px;background:var(--ink3);border-radius:8px;border:1px solid var(--border2);">0 students enrolled</div>
             </div>
-            <div class="form-group" style="display:flex;align-items:flex-end;">
-              <button class="btn btn-primary" style="width:100%;" onclick="enrollFace()">📷 Capture & Enroll</button>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-primary" onclick="enrollFace()">📷 Capture & Enroll</button>
+              <button class="btn btn-ghost" style="color:var(--red);border-color:rgba(255,95,109,0.3);font-size:0.72rem;" onclick="clearEnrollments()">Clear All</button>
             </div>
           </div>
         </div>
@@ -1013,11 +1018,19 @@ window.onload = () => {
   renderClassesTable();
   updateDashboardStats();
 
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    initSupabase(SUPABASE_URL, SUPABASE_KEY);
-    document.getElementById('supaUrl').value = SUPABASE_URL;
-    document.getElementById('supaKey').value = SUPABASE_KEY;
+  const savedUrl = localStorage.getItem('acadex_url') || SUPABASE_URL;
+  const savedKey = localStorage.getItem('acadex_key') || SUPABASE_KEY;
+  if (savedUrl && savedKey) {
+    SUPABASE_URL = savedUrl; SUPABASE_KEY = savedKey;
+    const fields = ['supaUrl','adminSupaUrl'];
+    const keyFields = ['supaKey','adminSupaKey'];
+    fields.forEach(id => { const el=document.getElementById(id); if(el) el.value = savedUrl; });
+    keyFields.forEach(id => { const el=document.getElementById(id); if(el) el.value = savedKey; });
+    initSupabase(savedUrl, savedKey);
   }
+
+  // Load face recognition models in background
+  loadFaceModels();
 };
 
 function updateDate() {
@@ -1026,27 +1039,129 @@ function updateDate() {
   document.getElementById('todayBadge').textContent = now.toLocaleDateString('en-IN', opts).toUpperCase();
 }
 
+
 // =============================================
-// SUPABASE
+// INLINE SUPABASE CLIENT (no external SDK needed)
 // =============================================
-function initSupabase(url, key) {
-  // Dynamically load Supabase client
-  if (!window.supabaseClient) {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/supabase/2.39.0/umd/supabase.min.js';
-    script.onload = () => {
-      try {
-        supabase = window.supabase.createClient(url, key);
-        document.getElementById('dbStatus').textContent = 'CONNECTED';
-        document.getElementById('dbStatus').style.background = 'rgba(56,217,192,0.1)';
-        document.getElementById('dbStatus').style.color = 'var(--teal)';
-        showToast('✓ Supabase connected', 'success');
-        loadFromSupabase();
-      } catch(e) {
-        showToast('Connection failed: ' + e.message, 'error');
-      }
+window.supabase = {
+  createClient(url, key) {
+    const headers = {
+      'apikey': key,
+      'Authorization': 'Bearer ' + key,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
     };
-    document.head.appendChild(script);
+
+    function builder(table) {
+      let _url    = url + '/rest/v1/' + table;
+      let _method = 'GET';
+      let _body   = null;
+      let _filters = [];
+      let _select  = '*';
+      let _prefer  = 'return=representation';
+
+      const q = {
+        select(cols) { _select = cols || '*'; return q; },
+
+        eq(col, val) { _filters.push(col + '=eq.' + encodeURIComponent(val)); return q; },
+        neq(col, val){ _filters.push(col + '=neq.' + encodeURIComponent(val)); return q; },
+        gt(col, val) { _filters.push(col + '=gt.' + encodeURIComponent(val)); return q; },
+        lt(col, val) { _filters.push(col + '=lt.' + encodeURIComponent(val)); return q; },
+
+        insert(rows) {
+          _method = 'POST';
+          _body   = JSON.stringify(Array.isArray(rows) ? rows : [rows]);
+          return q;
+        },
+
+        upsert(rows, opts) {
+          _method  = 'POST';
+          _body    = JSON.stringify(Array.isArray(rows) ? rows : [rows]);
+          const col = (opts && opts.onConflict) ? opts.onConflict : '';
+          _prefer  = 'resolution=merge-duplicates' + (col ? ',return=representation' : '');
+          return q;
+        },
+
+        update(data) {
+          _method = 'PATCH';
+          _body   = JSON.stringify(data);
+          return q;
+        },
+
+        delete() {
+          _method = 'DELETE';
+          return q;
+        },
+
+        then(resolve, reject) {
+          // Build final URL
+          let finalUrl = _url + '?select=' + encodeURIComponent(_select);
+          if (_filters.length) finalUrl += '&' + _filters.join('&');
+
+          const h = Object.assign({}, headers, { 'Prefer': _prefer });
+
+          fetch(finalUrl, { method: _method, headers: h, body: _body })
+            .then(async res => {
+              let data = null;
+              const text = await res.text();
+              try { data = text ? JSON.parse(text) : null; } catch(e) { data = text; }
+
+              if (!res.ok) {
+                const msg = (data && data.message) ? data.message :
+                            (data && data.error)   ? data.error   : res.statusText;
+                resolve({ data: null, error: { message: msg, status: res.status, details: data } });
+              } else {
+                resolve({ data: Array.isArray(data) ? data : (data ? [data] : []), error: null });
+              }
+            })
+            .catch(err => resolve({ data: null, error: { message: err.message } }));
+        },
+
+        // Allow await on the builder directly
+        get [Symbol.toStringTag]() { return 'SupabaseQuery'; }
+      };
+
+      // Make q thenable (so await works)
+      q[Symbol.iterator] = undefined;
+      return q;
+    }
+
+    return {
+      from(table) { return builder(table); }
+    };
+  }
+};
+
+// =============================================
+// SUPABASE INIT
+// =============================================
+let studentIdMap = {};
+
+function setDbStatus(connected) {
+  const el = document.getElementById('dbStatus');
+  if (!el) return;
+  if (connected) {
+    el.textContent = 'CONNECTED';
+    el.style.background = 'rgba(56,217,192,0.1)';
+    el.style.color = 'var(--teal)';
+  } else {
+    el.textContent = 'DISCONNECTED';
+    el.style.background = 'rgba(255,95,109,0.1)';
+    el.style.color = 'var(--red)';
+  }
+}
+
+function initSupabase(url, key) {
+  if (!url || !key) { showToast('Enter Supabase URL and Key', 'error'); return; }
+  try {
+    supabase = window.supabase.createClient(url, key);
+    setDbStatus(true);
+    showToast('Connected to Supabase', 'success');
+    loadFromSupabase();
+  } catch(e) {
+    setDbStatus(false);
+    console.error('Supabase init error:', e);
+    showToast('Connection failed: ' + e.message, 'error');
   }
 }
 
@@ -1057,29 +1172,57 @@ function connectSupabase() {
   localStorage.setItem('acadex_url', url);
   localStorage.setItem('acadex_key', key);
   SUPABASE_URL = url; SUPABASE_KEY = key;
+  supabase = null;
   initSupabase(url, key);
 }
 
 async function loadFromSupabase() {
   if (!supabase) return;
   try {
-    const { data: students } = await supabase.from('students').select('*');
+    const { data: students, error: sErr } = await supabase.from('students').select('*');
+    if (sErr) { console.error('Students load error:', sErr.message); showToast('DB error loading students: ' + sErr.message, 'error'); }
     if (students && students.length) {
+      studentIdMap = {};
+      students.forEach(s => { studentIdMap[s.student_id] = s.id; });
       renderStudents(students);
       updateDashboardStats(students.length);
     }
+
     const today = new Date().toISOString().split('T')[0];
-    const { data: att } = await supabase.from('attendance').select('*').eq('date', today);
-    if (att) renderRecentAttendance(att);
-  } catch(e) { console.warn('Supabase load error', e); }
+    const { data: att, error: aErr } = await supabase
+      .from('attendance')
+      .select('*,students(name,class,student_id)')
+      .eq('date', today);
+    if (aErr) { console.error('Attendance load error:', aErr.message); }
+    if (att && att.length) {
+      att.forEach(r => { attendanceMap[r.student_id] = r.status; });
+      renderRecentAttendance(att.map(r => ({
+        student_id: r.student_id,
+        status: r.status,
+        _name:  r.students ? r.students.name  : null,
+        _class: r.students ? r.students.class : null
+      })));
+      updateDashboardStats();
+    }
+  } catch(e) { console.warn('loadFromSupabase error:', e); }
 }
 
 async function saveAttendanceToSupabase(records) {
   if (!supabase) return false;
   try {
-    const { error } = await supabase.from('attendance').upsert(records);
-    return !error;
-  } catch(e) { return false; }
+    const resolved = records.map(r => {
+      const localStudent = SAMPLE_STUDENTS.find(s => s.id === r.student_id);
+      const realUUID = localStudent
+        ? (studentIdMap[localStudent.student_id] || r.student_id)
+        : r.student_id;
+      return { student_id: realUUID, date: r.date, status: r.status, class: r.class || '' };
+    });
+    const { error } = await supabase
+      .from('attendance')
+      .upsert(resolved, { onConflict: 'student_id,date' });
+    if (error) { console.error('Attendance save error:', error.message); showToast('DB error: ' + error.message, 'error'); return false; }
+    return true;
+  } catch(e) { console.error('saveAttendanceToSupabase exception:', e); return false; }
 }
 
 // =============================================
@@ -1092,7 +1235,8 @@ function showPage(name, el) {
   if (el) el.classList.add('active');
   const titles = {dashboard:'Dashboard',mark:'Mark Attendance',face:'Face Scan',students:'Students',classes:'Classes',reports:'Reports',admin:'Admin Panel',setup:'Supabase Setup'};
   document.getElementById('pageTitle').textContent = titles[name] || name;
-  if (name === 'face') stopCamera();
+  if (name === 'face') { populateEnrollSelect(); updateEnrolledCount(); }
+  else stopCamera();
 }
 
 // =============================================
@@ -1184,7 +1328,7 @@ function filterStudents(q) {
   renderStudents(filtered);
 }
 
-function addStudent() {
+async function addStudent() {
   const name  = document.getElementById('newStudentName').value.trim();
   const sid   = document.getElementById('newStudentId').value.trim();
   const cls   = document.getElementById('newStudentClass').value;
@@ -1193,9 +1337,22 @@ function addStudent() {
   const student = { id:'s'+Date.now(), name, student_id:sid, class:cls, email };
   SAMPLE_STUDENTS.push(student);
   renderStudents(SAMPLE_STUDENTS);
-  if (supabase) supabase.from('students').insert([{name, student_id:sid, class:cls, email}]);
   closeModal('addStudentModal');
-  showToast('✓ Student added: ' + name, 'success');
+
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('students')
+      .insert([{ name, student_id: sid, class: cls, email }])
+      .select();
+    if (error) {
+      showToast('DB error: ' + error.message, 'error');
+    } else if (data && data[0]) {
+      studentIdMap[sid] = data[0].id; // cache the real UUID
+      showToast('Student saved to database: ' + name, 'success');
+    }
+  } else {
+    showToast('Student added locally: ' + name, 'success');
+  }
   updateDashboardStats();
 }
 
@@ -1250,9 +1407,11 @@ function markAll(status) {
 
 async function saveAttendance() {
   const today = new Date().toISOString().split('T')[0];
-  const records = Object.entries(attendanceMap).map(([sid, status]) => ({
-    student_id: sid, date: today, status
-  }));
+  const selectedClass = document.getElementById('selectedClassName').textContent.replace('Class ', '');
+  const records = Object.entries(attendanceMap).map(([sid, status]) => {
+    const s = SAMPLE_STUDENTS.find(st => st.id === sid);
+    return { student_id: sid, date: today, status, class: s ? s.class : selectedClass };
+  });
   if (records.length === 0) { showToast('No attendance marked yet', 'error'); return; }
 
   // Add to sample data
@@ -1272,14 +1431,18 @@ function renderRecentAttendance(records) {
   const tbody = document.getElementById('recentAttTable');
   if (!records || records.length === 0) return;
   const rows = records.slice(-8).reverse().map(r => {
-    const student = SAMPLE_STUDENTS.find(s=>s.id===r.student_id) || { name:'Unknown', class:'—' };
+    // Support both local (id lookup) and DB-loaded records (_name/_class fields)
+    const localStudent = SAMPLE_STUDENTS.find(s => s.id === r.student_id);
+    const name  = r._name  || (localStudent ? localStudent.name  : 'Unknown');
+    const cls   = r._class || (localStudent ? localStudent.class : '—');
+    const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
     const time = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
     return `<tr>
       <td><div class="flex-center">
-        <div class="mini-avatar" style="background:rgba(240,192,96,0.1);color:var(--gold);font-size:0.6rem;">${student.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</div>
-        ${student.name}
+        <div class="mini-avatar" style="background:rgba(240,192,96,0.1);color:var(--gold);font-size:0.6rem;">${initials}</div>
+        ${name}
       </div></td>
-      <td>${student.class}</td>
+      <td>${cls}</td>
       <td style="font-family:'DM Mono',monospace;font-size:0.75rem;">${time}</td>
       <td><span class="status-badge status-${r.status}">${r.status}</span></td>
     </tr>`;
@@ -1290,7 +1453,7 @@ function renderRecentAttendance(records) {
 // =============================================
 // QUICK MARK
 // =============================================
-function quickMarkAttendance() {
+async function quickMarkAttendance() {
   const sid    = document.getElementById('quickStudentId').value.trim();
   const cls    = document.getElementById('quickClass').value;
   const status = document.getElementById('quickStatus').value;
@@ -1301,135 +1464,348 @@ function quickMarkAttendance() {
   renderRecentAttendance([{student_id:student.id, status}]);
   updateDashboardStats();
   closeModal('markModal');
-  showToast(`✓ ${student.name} marked as ${status}`, 'success');
+
+  if (supabase) {
+    const realId = studentIdMap[student.student_id] || student.id;
+    const today  = new Date().toISOString().split('T')[0];
+    const { error } = await supabase
+      .from('attendance')
+      .upsert([{ student_id: realId, date: today, status, class: cls }], { onConflict: 'student_id,date' });
+    showToast(error ? 'DB error: ' + error.message : `${student.name} marked ${status}`, error ? 'error' : 'success');
+  } else {
+    showToast(`${student.name} marked as ${status}`, 'success');
+  }
 }
 
 // =============================================
-// FACE SCAN
+// FACE RECOGNITION — face-api.js
 // =============================================
-async function startCamera() {
-  const statusEl = document.getElementById('scanStatus');
+const FACE_MODELS_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+let faceModelsLoaded  = false;
+let faceRecognizer    = null;   // LabeledFaceDescriptors matcher
+let scanInterval      = null;
+let scannedToday      = new Set(); // student IDs already marked this session
 
-  // Check if browser supports camera
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    statusEl.textContent = 'Camera not supported on this browser';
-    statusEl.className = 'fail';
-    showToast('Camera not supported — try Chrome or Firefox', 'error');
-    return;
-  }
+// Storage key for enrolled descriptors
+const ENROLL_KEY = 'acadex_face_descriptors';
 
-  // Check if page is on HTTPS or localhost
-  const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  if (!isSecure) {
-    statusEl.textContent = 'Camera requires HTTPS — deploy to Vercel or GitHub Pages';
-    statusEl.className = 'fail';
-    showToast('Camera needs HTTPS — use your Vercel/GitHub Pages URL', 'error');
-    return;
-  }
-
+// --- Load Models on page ready ---
+async function loadFaceModels() {
+  const badge = document.getElementById('faceModelStatus');
+  if (badge) { badge.textContent = 'LOADING MODELS…'; badge.style.background='rgba(240,192,96,0.1)'; badge.style.color='var(--gold)'; }
   try {
-    statusEl.textContent = 'Requesting camera permission...';
-    statusEl.className = '';
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODELS_URL),
+      faceapi.nets.faceLandmark68TinyNet.loadFromUri(FACE_MODELS_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODELS_URL),
+    ]);
+    faceModelsLoaded = true;
+    if (badge) { badge.textContent = 'AI READY'; badge.style.background='rgba(56,217,192,0.1)'; badge.style.color='var(--teal)'; }
+    buildRecognizer();
+    populateEnrollSelect();
+    updateEnrolledCount();
+  } catch(e) {
+    console.error('Model load error:', e);
+    if (badge) { badge.textContent = 'MODEL ERROR'; badge.style.background='rgba(255,95,109,0.1)'; badge.style.color='var(--red)'; }
+  }
+}
 
-    // Check permission state first
-    if (navigator.permissions) {
+// --- Build matcher from stored descriptors ---
+function buildRecognizer() {
+  const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
+  const labeled = Object.entries(stored).map(([label, descs]) => {
+    const floatArrays = descs.map(d => new Float32Array(d));
+    return new faceapi.LabeledFaceDescriptors(label, floatArrays);
+  });
+  faceRecognizer = labeled.length > 0
+    ? new faceapi.FaceMatcher(labeled, 0.50)
+    : null;
+}
+
+// --- Populate enroll dropdown ---
+function populateEnrollSelect() {
+  const sel = document.getElementById('enrollStudentSelect');
+  if (!sel) return;
+  const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
+  sel.innerHTML = '<option value="">— choose student —</option>' +
+    SAMPLE_STUDENTS.map(s =>
+      `<option value="${s.student_id}" data-id="${s.id}">${s.name} (${s.student_id})${stored[s.student_id] ? ' ✓' : ''}</option>`
+    ).join('');
+}
+
+function updateEnrolledCount() {
+  const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
+  const el = document.getElementById('enrolledCount');
+  if (el) el.textContent = Object.keys(stored).length + ' students enrolled';
+}
+
+// --- Camera start/stop ---
+async function startCamera() {
+  const statusEl     = document.getElementById('scanStatus');
+  const placeholder  = document.getElementById('cameraPlaceholder');
+  const placeholderP = placeholder ? placeholder.querySelector('p') : null;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const msg = location.protocol === 'file:'
+      ? 'Camera needs a web server. Run via http://localhost or deploy to HTTPS.'
+      : 'Camera API unavailable — use HTTPS or localhost.';
+    statusEl.textContent = msg; statusEl.className = 'fail';
+    showToast('Camera unavailable — needs HTTPS', 'error'); return;
+  }
+
+  if (navigator.permissions) {
+    try {
       const perm = await navigator.permissions.query({ name: 'camera' });
       if (perm.state === 'denied') {
-        statusEl.textContent = '⚠ Camera blocked — allow it in browser settings (🔒 lock icon in address bar)';
+        statusEl.textContent = 'Camera blocked. Click the lock/camera icon in your address bar → Allow → then click Start Camera.';
         statusEl.className = 'fail';
-        showToast('Camera blocked! Click 🔒 in address bar → Allow Camera', 'error');
-        return;
+        showToast('Camera blocked in browser settings', 'error'); return;
       }
-    }
+    } catch(_) {}
+  }
 
+  statusEl.textContent = 'Requesting camera access…'; statusEl.className = '';
+  try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+      video: { facingMode:'user', width:{ideal:640}, height:{ideal:480} }
     });
-
-    const video = document.getElementById('cameraFeed');
-    video.srcObject = cameraStream;
-    video.style.display = 'block';
-    document.getElementById('cameraPlaceholder').style.display = 'none';
-    statusEl.textContent = '● Camera active — position face in frame';
-    statusEl.className = 'success';
-    showToast('✓ Camera started', 'success');
-
   } catch(e) {
-    console.error('Camera error:', e);
-    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-      statusEl.textContent = '⚠ Permission denied — click 🔒 in address bar → Camera → Allow → Refresh';
+    if (e.name === 'OverconstrainedError') {
+      try { cameraStream = await navigator.mediaDevices.getUserMedia({ video: true }); }
+      catch(e2) { e = e2; }
+    }
+    if (!cameraStream) {
+      const msgs = {
+        NotAllowedError: 'Permission denied. Click the lock icon in the address bar → set Camera to Allow → click Start Camera.',
+        PermissionDeniedError: 'Permission denied. Allow camera in your browser settings.',
+        NotFoundError: 'No camera found on this device.',
+        DevicesNotFoundError: 'No camera found on this device.',
+        NotReadableError: 'Camera is in use by another app. Close it and try again.',
+        TrackStartError: 'Camera is in use by another app. Close it and try again.',
+      };
+      statusEl.textContent = msgs[e.name] || ('Camera error: ' + e.message);
       statusEl.className = 'fail';
-      showToast('Allow camera: click 🔒 lock icon in address bar', 'error');
-    } else if (e.name === 'NotFoundError') {
-      statusEl.textContent = '⚠ No camera found on this device';
-      statusEl.className = 'fail';
-      showToast('No camera found on this device', 'error');
-    } else if (e.name === 'NotReadableError') {
-      statusEl.textContent = '⚠ Camera is being used by another app — close it and try again';
-      statusEl.className = 'fail';
-      showToast('Camera in use by another app', 'error');
-    } else {
-      statusEl.textContent = '⚠ Camera error: ' + e.message;
-      statusEl.className = 'fail';
+      if (placeholderP) placeholderP.textContent = '⚠ ' + (e.name || 'Error');
       showToast('Camera error: ' + e.name, 'error');
+      console.error('Camera:', e.name, e.message); return;
     }
   }
+
+  const video = document.getElementById('cameraFeed');
+  video.srcObject = cameraStream;
+  video.style.display = 'block';
+  if (placeholder) placeholder.style.display = 'none';
+  document.getElementById('scanOverlay').style.display = 'none';
+  statusEl.textContent = faceModelsLoaded
+    ? (faceRecognizer ? 'Scanning for faces…' : 'Camera active — enroll faces first to enable recognition')
+    : 'Camera active — loading AI models…';
+  statusEl.className = 'success';
+  showToast('Camera started', 'success');
+
+  // Wait for video metadata then start recognition loop
+  video.onloadedmetadata = () => {
+    resizeFaceCanvas();
+    if (faceModelsLoaded) startScanLoop();
+  };
+}
+
+function resizeFaceCanvas() {
+  const video  = document.getElementById('cameraFeed');
+  const canvas = document.getElementById('faceCanvas');
+  canvas.width  = video.videoWidth  || video.clientWidth;
+  canvas.height = video.videoHeight || video.clientHeight;
 }
 
 function stopCamera() {
+  if (scanInterval) { clearInterval(scanInterval); scanInterval = null; }
   if (cameraStream) {
-    cameraStream.getTracks().forEach(t=>t.stop());
+    cameraStream.getTracks().forEach(t => t.stop());
     cameraStream = null;
-    const video = document.getElementById('cameraFeed');
-    video.style.display = 'none';
-    document.getElementById('cameraPlaceholder').style.display = 'flex';
-    document.getElementById('scanStatus').textContent = 'Camera stopped';
-    document.getElementById('scanStatus').className = '';
   }
+  const video    = document.getElementById('cameraFeed');
+  const canvas   = document.getElementById('faceCanvas');
+  const overlay  = document.getElementById('scanOverlay');
+  const ph       = document.getElementById('cameraPlaceholder');
+  const phP      = ph ? ph.querySelector('p') : null;
+  video.style.display   = 'none';
+  overlay.style.display = 'flex';
+  if (ph) ph.style.display = 'flex';
+  if (phP) phP.textContent = 'Camera not started';
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  document.getElementById('scanStatus').textContent = 'Camera stopped — click Start Camera';
+  document.getElementById('scanStatus').className = '';
 }
 
-function simulateScan() {
-  const randomStudent = SAMPLE_STUDENTS[Math.floor(Math.random()*SAMPLE_STUDENTS.length)];
-  const statuses = ['present','present','present','late'];
-  const status = statuses[Math.floor(Math.random()*statuses.length)];
-  attendanceMap[randomStudent.id] = status;
+// --- Continuous scan loop ---
+function startScanLoop() {
+  if (scanInterval) clearInterval(scanInterval);
+  scanInterval = setInterval(runFaceScan, 1500);
+}
 
+async function runFaceScan() {
+  const video = document.getElementById('cameraFeed');
+  if (!video || video.paused || video.ended || !cameraStream) return;
+  if (!faceModelsLoaded) return;
+
+  const canvas = document.getElementById('faceCanvas');
+  resizeFaceCanvas();
+
+  const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+  const detections = await faceapi
+    .detectAllFaces(video, opts)
+    .withFaceLandmarks(true)
+    .withFaceDescriptors();
+
+  // Draw boxes on canvas
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const scaleX = canvas.width  / (video.videoWidth  || canvas.width);
+  const scaleY = canvas.height / (video.videoHeight || canvas.height);
+
+  if (detections.length === 0) {
+    document.getElementById('scanStatus').textContent = faceRecognizer ? 'No face detected — look at the camera' : 'Camera active — enroll faces first';
+    document.getElementById('scanStatus').className = '';
+    return;
+  }
+
+  for (const det of detections) {
+    const box = det.detection.box;
+    const x = box.x * scaleX, y = box.y * scaleY;
+    const w = box.width * scaleX, h = box.height * scaleY;
+
+    let label = 'Unknown', color = '#ff5f6d', matched = null;
+    if (faceRecognizer) {
+      const result = faceRecognizer.findBestMatch(det.descriptor);
+      if (result.label !== 'unknown') {
+        label   = result.label; // this is student_id text e.g. STU-001
+        color   = '#38d9c0';
+        matched = SAMPLE_STUDENTS.find(s => s.student_id === label);
+        if (matched) label = matched.name;
+      }
+    }
+
+    // Draw bounding box
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(x, y, w, h);
+
+    // Draw name tag
+    ctx.fillStyle = color + 'cc';
+    ctx.fillRect(x, y - 22, w, 22);
+    ctx.fillStyle = '#0a0a0f';
+    ctx.font = 'bold 11px DM Sans, sans-serif';
+    ctx.fillText(label, x + 6, y - 6);
+
+    // Auto-mark attendance if matched and not already marked this session
+    if (matched && !scannedToday.has(matched.student_id)) {
+      scannedToday.add(matched.student_id);
+      await markFaceAttendance(matched);
+    }
+  }
+
+  document.getElementById('scanStatus').textContent = detections.length + ' face(s) detected';
+  document.getElementById('scanStatus').className = detections.length > 0 ? 'success' : '';
+}
+
+async function markFaceAttendance(student) {
+  const status = 'present';
+  const time   = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  attendanceMap[student.id] = status;
   scanCount++;
   document.getElementById('scanCount').textContent = scanCount + ' SCANNED';
-  document.getElementById('scanStatus').textContent = '✓ Identified: ' + randomStudent.name;
+  document.getElementById('scanStatus').textContent = '✓ Marked: ' + student.name;
   document.getElementById('scanStatus').className = 'success';
 
-  const log = document.getElementById('scanLog');
-  const first = log.querySelector('[style*="text-align:center"]');
-  if (first) first.remove();
-
-  const color = avatarColors[Math.floor(Math.random()*avatarColors.length)];
-  const initials = randomStudent.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-  const time = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-  const entry = document.createElement('div');
+  // Add to scan log
+  const log   = document.getElementById('scanLog');
+  const empty = log.querySelector('[style*="text-align:center"]');
+  if (empty) empty.remove();
+  const color    = avatarColors[SAMPLE_STUDENTS.indexOf(student) % avatarColors.length];
+  const initials = student.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+  const entry    = document.createElement('div');
   entry.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px;background:var(--ink3);border-radius:10px;animation:fadeIn 0.3s ease;';
   entry.innerHTML = `
     <div class="mini-avatar" style="background:${color}22;color:${color};">${initials}</div>
     <div style="flex:1;">
-      <div style="font-size:0.8rem;font-weight:600;">${randomStudent.name}</div>
-      <div style="font-size:0.65rem;color:var(--muted);">${randomStudent.student_id} · ${randomStudent.class}</div>
+      <div style="font-size:0.8rem;font-weight:600;">${student.name}</div>
+      <div style="font-size:0.65rem;color:var(--muted);">${student.student_id} · ${student.class}</div>
     </div>
     <div style="text-align:right;">
-      <span class="status-badge status-${status}">${status}</span>
+      <span class="status-badge status-present">present</span>
       <div style="font-size:0.6rem;color:var(--muted);margin-top:3px;font-family:'DM Mono',monospace;">${time}</div>
     </div>`;
   log.insertBefore(entry, log.firstChild);
   updateDashboardStats();
-  setTimeout(()=>{ document.getElementById('scanStatus').textContent = 'Ready — waiting for next face'; document.getElementById('scanStatus').className=''; }, 2000);
+  showToast('✓ ' + student.name + ' marked present', 'success');
+
+  // Push to Supabase
+  if (supabase) {
+    const realId = studentIdMap[student.student_id] || student.id;
+    const today  = new Date().toISOString().split('T')[0];
+    const { error } = await supabase
+      .from('attendance')
+      .upsert([{ student_id: realId, date: today, status, class: student.class }], { onConflict: 'student_id,date' });
+    if (error) console.error('Face attendance DB error:', error.message);
+  }
 }
 
-function enrollFace() {
-  const name = document.getElementById('enrollName').value.trim();
-  const sid  = document.getElementById('enrollId').value.trim();
-  if (!name || !sid) { showToast('Enter name and ID to enroll', 'error'); return; }
-  showToast(`✓ Face enrolled for ${name} (${sid})`, 'success');
-  document.getElementById('enrollName').value = '';
-  document.getElementById('enrollId').value = '';
+// --- Enrollment ---
+async function enrollFace() {
+  const sel = document.getElementById('enrollStudentSelect');
+  const sid = sel ? sel.value : '';
+  if (!sid) { showToast('Select a student first', 'error'); return; }
+  if (!faceModelsLoaded) { showToast('AI models still loading…', 'error'); return; }
+
+  const video = document.getElementById('cameraFeed');
+  if (!cameraStream || video.style.display === 'none') {
+    showToast('Start the camera first, then click Capture', 'error'); return;
+  }
+
+  const student = SAMPLE_STUDENTS.find(s => s.student_id === sid);
+  if (!student) { showToast('Student not found', 'error'); return; }
+
+  document.getElementById('scanStatus').textContent = 'Capturing face for ' + student.name + '…';
+  const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.4 });
+  const detection = await faceapi
+    .detectSingleFace(video, opts)
+    .withFaceLandmarks(true)
+    .withFaceDescriptor();
+
+  if (!detection) {
+    document.getElementById('scanStatus').textContent = 'No face detected — make sure your face is visible and well-lit';
+    document.getElementById('scanStatus').className = 'fail';
+    showToast('No face detected — try again', 'error'); return;
+  }
+
+  // Save descriptor to localStorage
+  const stored = JSON.parse(localStorage.getItem(ENROLL_KEY) || '{}');
+  if (!stored[sid]) stored[sid] = [];
+  stored[sid].push(Array.from(detection.descriptor));
+  // Keep max 3 samples per student for accuracy
+  if (stored[sid].length > 3) stored[sid] = stored[sid].slice(-3);
+  localStorage.setItem(ENROLL_KEY, JSON.stringify(stored));
+
+  buildRecognizer();
+  populateEnrollSelect();
+  updateEnrolledCount();
+
+  document.getElementById('scanStatus').textContent = '✓ Face enrolled for ' + student.name;
+  document.getElementById('scanStatus').className = 'success';
+  showToast('✓ Face enrolled: ' + student.name, 'success');
+
+  // Reset scannedToday so they can be re-recognized immediately
+  scannedToday.delete(sid);
+}
+
+function clearEnrollments() {
+  if (!confirm('Clear all enrolled faces? Students will need to re-enroll.')) return;
+  localStorage.removeItem(ENROLL_KEY);
+  buildRecognizer();
+  populateEnrollSelect();
+  updateEnrolledCount();
+  showToast('All face enrollments cleared', 'success');
 }
 
 // =============================================
@@ -1535,6 +1911,11 @@ function testConnection() {
   localStorage.setItem('acadex_url', url);
   localStorage.setItem('acadex_key', key);
   SUPABASE_URL = url; SUPABASE_KEY = key;
+  supabase = null;
+  const su = document.getElementById('supaUrl');
+  const sk = document.getElementById('supaKey');
+  if (su) su.value = url;
+  if (sk) sk.value = key;
   initSupabase(url, key);
 }
 
@@ -1542,19 +1923,29 @@ function createTables() {
   showToast('Run the SQL from the Setup page in Supabase SQL editor', 'error');
 }
 
-function seedData() {
+async function seedData() {
   if (!supabase) { showToast('Connect Supabase first', 'error'); return; }
-  supabase.from('students').insert(SAMPLE_STUDENTS.map(s=>({name:s.name,student_id:s.student_id,class:s.class,email:s.email})))
-    .then(()=>showToast('✓ Sample data seeded', 'success'))
-    .catch(()=>showToast('Seed failed — ensure tables exist', 'error'));
+  const { error } = await supabase.from('students').insert(
+    SAMPLE_STUDENTS.map(s => ({ name: s.name, student_id: s.student_id, class: s.class, email: s.email }))
+  );
+  if (error) {
+    showToast('Seed failed: ' + error.message, 'error');
+  } else {
+    showToast('Sample data seeded', 'success');
+    loadFromSupabase();
+  }
 }
 
-function clearData() {
+async function clearData() {
   if (!confirm('Clear all attendance data? This cannot be undone.')) return;
-  if (supabase) supabase.from('attendance').delete().neq('id','00000000-0000-0000-0000-000000000000');
-  Object.keys(attendanceMap).forEach(k=>delete attendanceMap[k]);
+  Object.keys(attendanceMap).forEach(k => delete attendanceMap[k]);
   updateDashboardStats();
-  showToast('✓ Data cleared', 'success');
+  if (supabase) {
+    const { error } = await supabase.from('attendance').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    showToast(error ? 'DB error: ' + error.message : 'All attendance data cleared', error ? 'error' : 'success');
+  } else {
+    showToast('Local data cleared', 'success');
+  }
 }
 
 // =============================================
